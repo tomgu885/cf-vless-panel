@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CF VLESS · 控制台</title>
+    <style>
+      :root {
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        color: #e9edf5;
+        background: #0c111b;
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        flex-shrink: 0;
+        white-space: nowrap;
+        background: #8af0c2;
+        color: #10271e;
+        border: 0;
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-weight: 650;
+      }
+      button.secondary {
+        background: #252e40;
+        color: #e9edf5;
+      }
+      button.danger {
+        background: #41262e;
+        color: #ffbdc5;
+      }
+      input,
+      select,
+      textarea {
+        background: #0c111b;
+        color: #e9edf5;
+        border: 1px solid #344056;
+        border-radius: 8px;
+        padding: 12px;
+        width: 100%;
+      }
+      textarea {
+        min-height: 180px;
+        line-height: 1.7;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+      label {
+        display: block;
+        margin: 20px 0 8px;
+        color: #c1cbdd;
+      }
+      header {
+        height: 80px;
+        border-bottom: 1px solid #273044;
+        padding: 0 40px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        font-size: 19px;
+        font-weight: 750;
+        letter-spacing: 1px;
+      }
+      .brand span {
+        color: #8af0c2;
+      }
+      .layout {
+        max-width: 1360px;
+        margin: 40px auto;
+        padding: 0 24px;
+        display: grid;
+        grid-template-columns: 210px 1fr;
+        gap: 40px;
+      }
+      nav {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      nav button {
+        background: transparent;
+        color: #9caec6;
+        text-align: left;
+      }
+      nav button.active {
+        background: #1a2d2a;
+        color: #8af0c2;
+      }
+      .card {
+        background: #141c2a;
+        border: 1px solid #283448;
+        padding: 28px;
+        border-radius: 14px;
+        margin-bottom: 20px;
+      }
+      h1 {
+        font-size: 30px;
+        margin: 0 0 10px;
+      }
+      h2 {
+        font-size: 19px;
+        margin: 0 0 15px;
+      }
+      p {
+        color: #9eacc1;
+        line-height: 1.7;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #8af0c2;
+        margin-bottom: 12px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .metric {
+        font-size: 30px;
+        font-weight: 650;
+      }
+      .muted {
+        color: #92a1b7;
+        font-size: 13px;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 24px;
+      }
+      .hidden {
+        display: none !important;
+      }
+      #login {
+        max-width: 440px;
+        margin: 12vh auto;
+        padding: 32px;
+      }
+      #status {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: #273b34;
+        color: #dbfff0;
+        padding: 14px 24px;
+        border-radius: 10px;
+        max-width: 90vw;
+        z-index: 3;
+      }
+      a {
+        color: #8af0c2;
+      }
+      .subscription {
+        display: flex;
+        gap: 10px;
+        margin: 14px 0;
+      }
+      .subscription input {
+        min-width: 0;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .check input {
+        width: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 14px 8px;
+        border-bottom: 1px solid #293247;
+      }
+      .scroll {
+        overflow: auto;
+      }
+      .note {
+        border-left: 3px solid #8af0c2;
+        padding-left: 16px;
+      }
+      @media (max-width: 720px) {
+        header {
+          padding: 0 20px;
+          height: 66px;
+        }
+        .layout {
+          display: block;
+          margin: 22px auto;
+          padding: 0 16px;
+        }
+        nav {
+          flex-direction: row;
+          overflow: auto;
+          margin-bottom: 24px;
+          gap: 4px;
+        }
+        nav button {
+          white-space: nowrap;
+          padding: 10px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .card {
+          padding: 20px;
+        }
+        h1 {
+          font-size: 25px;
+        }
+        .subscription {
+          flex-wrap: wrap;
+        }
+        #login {
+          margin: 8vh 16px;
+        }
+        .metric {
+          font-size: 24px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span>CF</span> VLESS <small class="muted">/ 控制台</small>
+      </div>
+      <button id="logout" class="secondary hidden">退出登录</button>
+    </header>
+    <form id="login" class="card">
+      <div class="eyebrow">PRIVATE NETWORK</div>
+      <h1>欢迎回来</h1>
+      <p>登录管理节点、订阅与出口。</p>
+      <label for="password">管理密码</label
+      ><input
+        id="password"
+        type="password"
+        autocomplete="current-password"
+        required
+        minlength="16"
+      />
+      <div class="actions"><button>登录控制台</button></div>
+      <p id="loginError" role="alert"></p>
+    </form>
+    <div id="app" class="layout hidden">
+      <nav id="nav">
+        <button data-page="overview" class="active">概览</button
+        ><button data-page="nodes">节点列表</button
+        ><button data-page="preferred">优选入口</button
+        ><button data-page="relays">地区中继</button
+        ><button data-page="outbound">真实出站</button
+        ><button data-page="settings">设置</button>
+      </nav>
+      <main>
+        <section data-section="overview">
+          <div class="eyebrow">WORKER NETWORK</div>
+          <h1>你的连接，由你掌控</h1>
+          <p>管理入口、传输协议和出口，获取客户端订阅。</p>
+          <div class="grid">
+            <div class="card">
+              <div class="muted">入口数量</div>
+              <div class="metric" id="count">—</div>
+            </div>
+            <div class="card">
+              <div class="muted">出站方式</div>
+              <div class="metric" id="modeText">—</div>
+            </div>
+            <div class="card">
+              <div class="muted">传输</div>
+              <div class="metric">TLS</div>
+            </div>
+          </div>
+          <div class="card">
+            <h2>订阅中心</h2>
+            <p>
+              订阅链接包含访问令牌，请妥善保管。更改配置后，在客户端更新订阅并重连。
+            </p>
+            <label for="format">客户端格式</label
+            ><select id="format">
+              <option value="uri">通用 URI（含 XHTTP / Xray）</option>
+              <option value="clash">Clash / Mihomo（WebSocket）</option>
+              <option value="singbox">sing-box JSON（WebSocket）</option>
+            </select>
+            <div class="subscription">
+              <input id="sub" readonly aria-label="订阅链接" /><button
+                id="copy"
+              >
+                复制链接
+              </button>
+            </div>
+            <p class="muted">
+              XHTTP 使用 packet-up；Clash 和 sing-box 下发兼容的 WebSocket
+              节点。
+            </p>
+          </div>
+        </section>
+        <section data-section="nodes" class="hidden">
+          <h1>节点列表</h1>
+          <p>
+            优选地址是客户端入口；TLS SNI 与 WebSocket Host
+            始终使用你的部署域名。
+          </p>
+          <div class="card scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>地址</th>
+                  <th>端口</th>
+                  <th>地区</th>
+                </tr>
+              </thead>
+              <tbody id="nodeRows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section data-section="preferred" class="hidden">
+          <h1>优选入口</h1>
+          <p>
+            每行一个地址：host:port#名称#地区。默认端口 443，地区为 US、JP
+            等两位代码。最多 1000 条，留空使用部署域名。
+          </p>
+          <div class="card">
+            <label for="nodes">节点地址</label
+            ><textarea
+              id="nodes"
+              placeholder="example.com:443#我的入口#JP"
+            ></textarea>
+            <p class="muted">
+              IPv6 使用 [地址]:端口。仅生成 TLS 节点，请填写支持 TLS 的入口。
+            </p>
+          </div>
+        </section>
+        <section data-section="relays" class="hidden">
+          <h1>地区中继</h1>
+          <p>
+            直连建立失败时，443 目标可以尝试你配置的 TLS 中继。中继需支持按原始
+            TLS SNI 转发。
+          </p>
+          <div class="card">
+            <label for="relays">中继地址</label
+            ><textarea
+              id="relays"
+              placeholder="relay.example.com:443#自有中继#JP"
+            ></textarea>
+            <p class="note">
+              默认列表为空。地区为空的条目作为通用候选，最多 100
+              条。中继与真实出站是不同配置。
+            </p>
+          </div>
+        </section>
+        <section data-section="outbound" class="hidden">
+          <h1>真实出站</h1>
+          <p>配置 Worker 连接目标时使用的代理出口。</p>
+          <div class="card">
+            <label for="mode">出站方式</label
+            ><select id="mode">
+              <option value="direct">直连</option>
+              <option value="auto">优先出口，连接失败回退直连</option>
+              <option value="only">仅走出口</option></select
+            ><label for="outbound">代理地址</label
+            ><input
+              id="outbound"
+              type="password"
+              autocomplete="off"
+              placeholder="socks5://user:password@host:1080"
+            />
+            <p class="muted">
+              支持 SOCKS5、HTTP CONNECT、HTTPS CONNECT 和 SS
+              AEAD。已保存的凭据不会回显；清空后保存可删除配置。
+            </p>
+            <p class="muted">
+              SS 支持 aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305；使用
+              SIP002 URI，不支持插件和 SS2022。
+            </p>
+          </div>
+        </section>
+        <section data-section="settings" class="hidden">
+          <h1>设置</h1>
+          <p>调整传输与目标端口。</p>
+          <div class="card">
+            <label class="check"
+              ><input id="trojan" type="checkbox" />启用 Trojan /
+              WebSocket</label
+            ><label class="check"
+              ><input id="xhttp" type="checkbox" />启用 VLESS / XHTTP</label
+            ><label for="ports">允许访问的目标端口</label><input id="ports" />
+            <p class="muted">
+              以英文逗号分隔，最多 32 个。当前版本仅支持 TCP。
+            </p>
+            <h2 style="margin-top: 28px">凭据独立管理</h2>
+            <p>
+              管理密码、会话签名密钥、订阅令牌、节点 UUID 和 Trojan 密码分别通过
+              Cloudflare Secrets 修改。修改管理密码会使现有登录会话失效。
+            </p>
+            <p class="muted">
+              配置使用
+              KV，保存后全球生效可能存在延迟，已经建立的连接不受更改影响。
+            </p>
+            <button id="reset" class="danger">还原默认配置</button>
+            <p class="muted">
+              仅删除本项目配置键，保留 Cloudflare Secrets 和其他 KV 数据。
+            </p>
+          </div>
+        </section>
+        <div class="actions">
+          <button id="save">保存配置</button
+          ><span class="muted" id="saved">所有页面共用保存按钮</span>
+        </div>
+      </main>
+    </div>
+    <div id="status" class="hidden" role="status"></div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let state;
+      let toastTimer;
+      function toast(message) {
+        $("status").textContent = message;
+        $("status").classList.remove("hidden");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(
+          () => $("status").classList.add("hidden"),
+          4500,
+        );
+      }
+      async function api(path, options = {}) {
+        const r = await fetch("/api/" + path, {
+          ...options,
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!r.ok) {
+          if (r.status === 401) {
+            $("app").classList.add("hidden");
+            $("login").classList.remove("hidden");
+            $("logout").classList.add("hidden");
+          }
+          throw Error(
+            r.status === 401
+              ? "请登录或检查管理密码"
+              : "操作失败，请检查输入后重试",
+          );
+        }
+        return r.json();
+      }
+      function serialize(items) {
+        return items
+          .map(
+            (n) =>
+              (n.host.includes(":") ? "[" + n.host + "]" : n.host) +
+              ":" +
+              n.port +
+              "#" +
+              n.name +
+              "#" +
+              n.region,
+          )
+          .join("\n");
+      }
+      function parse(text) {
+        const seen = new Set();
+        return text
+          .split("\n")
+          .map((x) => x.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [address, name = "", region = ""] = line.split("#");
+            const m = address.match(
+              /^(\[[0-9a-fA-F:]+\]|[a-zA-Z0-9.-]+)(?::(\d+))?$/,
+            );
+            if (!m) throw Error("节点地址格式错误");
+            return {
+              host: m[1].replace(/^\[|\]$/g, ""),
+              port: Number(m[2] || 443),
+              name,
+              region: region.toUpperCase(),
+            };
+          })
+          .filter((n) => {
+            const key = n.host + ":" + n.port;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      }
+      function subscription() {
+        if (state)
+          $("sub").value = state.subscription + "?format=" + $("format").value;
+      }
+      async function load() {
+        state = await api("settings");
+        render();
+      }
+      function render() {
+        $("nodes").value = serialize(state.nodes);
+        $("relays").value = serialize(state.relays);
+        $("outbound").value = state.outbound;
+        $("mode").value = state.mode;
+        $("ports").value = state.ports.join(",");
+        $("trojan").checked = state.trojan;
+        $("xhttp").checked = state.xhttp;
+        $("count").textContent = state.nodes.length || 1;
+        $("modeText").textContent = {
+          direct: "直连",
+          auto: "优先出口",
+          only: "仅出口",
+        }[state.mode];
+        $("nodeRows").replaceChildren();
+        for (const n of state.nodes.length
+          ? state.nodes
+          : [
+              {
+                host: location.hostname,
+                port: 443,
+                name: "默认入口",
+                region: "",
+              },
+            ]) {
+          const tr = document.createElement("tr");
+          for (const value of [
+            n.name || "—",
+            n.host,
+            n.port,
+            n.region || "通用",
+          ]) {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.append(td);
+          }
+          $("nodeRows").append(tr);
+        }
+        subscription();
+        $("login").classList.add("hidden");
+        $("app").classList.remove("hidden");
+        $("logout").classList.remove("hidden");
+      }
+      $("login").onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await api("login", {
+            method: "POST",
+            body: JSON.stringify({ password: $("password").value }),
+          });
+          $("password").value = "";
+          $("loginError").textContent = "";
+          await load();
+        } catch (e) {
+          $("loginError").textContent = e.message;
+        }
+      };
+      $("nav").onclick = (e) => {
+        const b = e.target.closest("[data-page]");
+        if (!b) return;
+        document
+          .querySelectorAll("[data-section]")
+          .forEach((s) =>
+            s.classList.toggle("hidden", s.dataset.section !== b.dataset.page),
+          );
+        document
+          .querySelectorAll("[data-page]")
+          .forEach((n) => n.classList.toggle("active", n === b));
+      };
+      $("format").onchange = subscription;
+      $("copy").onclick = async () => {
+        try {
+          await navigator.clipboard.writeText($("sub").value);
+          toast("订阅链接已复制");
+        } catch {
+          toast("请手动选择并复制链接");
+        }
+      };
+      $("save").onclick = async () => {
+        try {
+          const data = {
+            nodes: parse($("nodes").value),
+            relays: parse($("relays").value),
+            outbound: $("outbound").value,
+            mode: $("mode").value,
+            ports: $("ports").value.split(",").map(Number),
+            trojan: $("trojan").checked,
+            xhttp: $("xhttp").checked,
+          };
+          await api("settings", { method: "PUT", body: JSON.stringify(data) });
+          state = {
+            ...state,
+            ...data,
+            outbound: data.outbound ? "[已配置]" : "",
+          };
+          render();
+          toast("已保存；请更新订阅并重连。");
+          $("saved").textContent = "保存成功 · 全球生效可能有延迟";
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+      $("logout").onclick = async () => {
+        try {
+          await api("logout", { method: "POST" });
+          location.reload();
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+      $("reset").onclick = async () => {
+        if (!confirm("还原节点与出口配置？独立密钥和其他 KV 数据将保留。"))
+          return;
+        try {
+          const result = await api("reset", { method: "POST" });
+          state = { ...state, ...result.settings };
+          render();
+          toast("已还原；全球生效可能有延迟。");
+        } catch (e) {
+          toast(e.message);
+        }
+      };
+      load().catch(() => {});
+    </script>
+  </body>
+</html>

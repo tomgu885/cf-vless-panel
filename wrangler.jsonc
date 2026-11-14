@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cf-vless-panel",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [
+    { "binding": "CONFIG", "id": "replace-with-your-kv-namespace-id" },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "XHTTP", "class_name": "XhttpSession" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["XhttpSession"] }],
+  "secrets": {
+    "required": [
+      "ADMIN_PASSWORD",
+      "SESSION_SECRET",
+      "NODE_UUID",
+      "SUB_TOKEN",
+      "TROJAN_PASSWORD",
+    ],
+  },
+  "observability": { "enabled": false },
+  "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": true }],
+}
