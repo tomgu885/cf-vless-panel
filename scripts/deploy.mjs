@@ -88,7 +88,11 @@ async function ask(
     const value = answer.value.trim() || fallback;
     const error = validate(value);
     if (!error) return value;
-    console.log(error + " 请重新输入。");
+    console.log(
+      value === ""
+        ? "此项为必填项，不能为空。请重新输入。"
+        : error + " 请重新输入。",
+    );
   }
 }
 async function readLocal(path, fallback) {
@@ -274,8 +278,8 @@ try {
   let token = "";
   if (!dryRun) {
     token = await ask(
-      "Cloudflare API Token（仅本次使用，不保存）",
-      process.env.CLOUDFLARE_API_TOKEN,
+      "Cloudflare API Token（必填，仅本次使用，不保存）",
+      "",
       "用途：授权本次部署。获取：Cloudflare 控制台 → My Profile → API Tokens → Create Token。授予目标账号 Workers Scripts、Workers KV Storage 编辑权限；自定义域名还需对应 Zone 读取及 Workers Routes 编辑权限。",
       (value) =>
         typeof value === "string" && /^[\x21-\x7e]+$/.test(value)

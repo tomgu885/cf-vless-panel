@@ -490,3 +490,53 @@ test("reuse prompts only for invalid saved fields and allows correcting them", a
     before,
   );
 });
+
+test("required token retries blank input even when an environment token exists", async (t) => {
+  const root = await fixture(t);
+  const environmentToken = "environment-token-for-test-only";
+  const result = run(root, [...answers(), "", " \t ", token, "deploy"], [], {
+    CLOUDFLARE_API_TOKEN: environmentToken,
+    TEST_EXPECT_TOKEN: token,
+  });
+  assert.equal(result.status, 0);
+  const prompt = "Cloudflare API Token（必填，仅本次使用，不保存）：";
+  assert.equal(result.output.split(prompt).length - 1, 3);
+  assert.equal(
+    result.output.split("此项为必填项，不能为空。请重新输入。").length - 1,
+    2,
+  );
+  assert.ok(
+    result.output.lastIndexOf(prompt) <
+      result.output.indexOf("输入 deploy 执行"),
+  );
+  assert.ok(!result.output.includes(environmentToken));
+  const args = JSON.parse(await readFile(join(root, "called.json")));
+  assert.ok(args.includes("deploy"));
+});
+
+test("required account and password confirmation retry blank answers", async (t) => {
+  const root = await fixture(t);
+  const lines = answers();
+  lines.splice(5, 0, "", " \t ");
+  lines.unshift("", " \t ");
+  const result = run(root, lines, ["--dry-run"]);
+  assert.equal(result.status, 0);
+  assert.equal(
+    result.output.split("此项为必填项，不能为空。请重新输入。").length - 1,
+    4,
+  );
+  const c = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  assert.equal(c.account_id, account);
+});
+
+test("EOF after an empty required token stops without using an environment token", async (t) => {
+  const root = await fixture(t);
+  const result = run(root, [...answers(), " \t "], [], {
+    CLOUDFLARE_API_TOKEN: "environment-token-for-test-only",
+  });
+  assert.equal(result.status, 1);
+  assert.ok(result.output.includes("此项为必填项，不能为空。请重新输入。"));
+  assert.ok(!result.output.includes("输入 deploy 执行"));
+  await assert.rejects(stat(join(root, "called.json")));
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+});
