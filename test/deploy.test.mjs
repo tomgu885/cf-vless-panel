@@ -79,8 +79,16 @@ function run(root, lines, args = [], env = {}) {
     timeout: 10000,
   });
   const output = (r.stdout ?? "") + (r.stderr ?? "");
+  const otherOutput = output
+    .split(/\r?\n/)
+    .filter((line) => !line.startsWith("管理密码："))
+    .join("\n");
   for (const secret of [account, kv, password, token])
-    assert.ok(!output.includes(secret), "output must not disclose inputs");
+    assert.ok(
+      !otherOutput.includes(secret),
+      "only the explicit admin password line may disclose the login password",
+    );
+  assert.ok(!output.includes(token), "API token must never appear in output");
   assert.equal(r.error, undefined);
   return { ...r, output };
 }
@@ -265,6 +273,12 @@ test("successful deploy prints a VLESS URI using the first configured custom dom
   assert.ok(
     result.output.includes("管理面板地址：https://preferred.example.com/"),
   );
+  assert.ok(
+    result.output.includes(
+      `管理面板地址：https://preferred.example.com/\n管理密码：${password}\nVLESS / WebSocket`,
+    ),
+  );
+  assert.equal(result.output.split("管理密码：").length - 1, 1);
   assert.ok(result.output.trim().split(/\r?\n/).at(-1).startsWith("vless://"));
   assert.equal(link.port, "443");
   assert.equal(
@@ -297,6 +311,7 @@ test("without a custom domain the URI uses the account subdomain returned by Clo
       "管理面板地址：https://test-worker.assigned-account.workers.dev/",
     ),
   );
+  assert.ok(result.output.includes(`管理密码：${password}`));
   assert.equal(link.searchParams.get("sni"), link.hostname);
   assert.equal(link.searchParams.get("host"), link.hostname);
   assert.ok(
@@ -326,8 +341,11 @@ test("dry run, cancellation, failed deployment and failed domain lookup do not p
   assert.equal(lookup.status, 1);
   assert.ok(lookup.output.includes("部署已成功"));
   assert.ok(!lookup.output.includes("vless://"));
-  for (const result of [dry, cancelled, failed, lookup])
+  for (const result of [dry, cancelled, failed, lookup]) {
     assert.ok(!result.output.includes("管理面板地址："));
+    assert.ok(!/^管理密码：/m.test(result.output));
+    assert.ok(!result.output.includes(password));
+  }
 });
 
 test("disabled workers.dev without custom domain does not generate an inaccessible URI", async (t) => {
@@ -550,4 +568,30 @@ test("EOF after an empty required token stops without using an environment token
   assert.ok(!result.output.includes("输入 deploy 执行"));
   await assert.rejects(stat(join(root, "called.json")));
   await assert.rejects(stat(join(root, "api-calls.txt")));
+});
+
+test("successful deployment displays the saved random admin password and keeps the VLESS URI last", async (t) => {
+  const root = await fixture(t);
+  const lines = answers();
+  lines.splice(4, 2, "");
+  const result = run(root, [...lines, token, "deploy"]);
+  assert.equal(result.status, 0);
+  const secrets = JSON.parse(
+    await readFile(join(root, ".deploy-secrets.json")),
+  );
+  assert.match(secrets.ADMIN_PASSWORD, /^[A-Za-z0-9_-]{43}$/);
+  assert.ok(
+    result.output.includes(
+      `管理面板地址：https://test-worker.assigned-account.workers.dev/\n管理密码：${secrets.ADMIN_PASSWORD}\nVLESS / WebSocket`,
+    ),
+  );
+  assert.equal(result.output.split("管理密码：").length - 1, 1);
+  assert.ok(result.output.trim().split(/\r?\n/).at(-1).startsWith("vless://"));
+  for (const secret of [
+    secrets.SESSION_SECRET,
+    secrets.SUB_TOKEN,
+    secrets.TROJAN_PASSWORD,
+    token,
+  ])
+    assert.ok(!result.output.includes(secret));
 });
