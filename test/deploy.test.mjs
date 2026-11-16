@@ -262,6 +262,10 @@ test("successful deploy prints a VLESS URI using the first configured custom dom
     result.output.split(/\r?\n/).find((line) => line.startsWith("vless://")),
   );
   assert.equal(link.hostname, "preferred.example.com");
+  assert.ok(
+    result.output.includes("管理面板地址：https://preferred.example.com/"),
+  );
+  assert.ok(result.output.trim().split(/\r?\n/).at(-1).startsWith("vless://"));
   assert.equal(link.port, "443");
   assert.equal(
     link.username,
@@ -288,6 +292,11 @@ test("without a custom domain the URI uses the account subdomain returned by Clo
     result.output.split(/\r?\n/).find((line) => line.startsWith("vless://")),
   );
   assert.equal(link.hostname, "test-worker.assigned-account.workers.dev");
+  assert.ok(
+    result.output.includes(
+      "管理面板地址：https://test-worker.assigned-account.workers.dev/",
+    ),
+  );
   assert.equal(link.searchParams.get("sni"), link.hostname);
   assert.equal(link.searchParams.get("host"), link.hostname);
   assert.ok(
@@ -317,6 +326,8 @@ test("dry run, cancellation, failed deployment and failed domain lookup do not p
   assert.equal(lookup.status, 1);
   assert.ok(lookup.output.includes("部署已成功"));
   assert.ok(!lookup.output.includes("vless://"));
+  for (const result of [dry, cancelled, failed, lookup])
+    assert.ok(!result.output.includes("管理面板地址："));
 });
 
 test("disabled workers.dev without custom domain does not generate an inaccessible URI", async (t) => {

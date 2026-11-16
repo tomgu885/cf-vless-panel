@@ -362,7 +362,7 @@ try {
     console.log("本地构建验证通过，未调用远端 API；未生成线上 VLESS 链接。");
   } else {
     console.log("部署成功。");
-    // 仅在部署成功后输出用户请求的节点链接，不回显其他凭据。
+    // 仅在部署成功后输出面板地址和节点链接，不回显其他凭据。
     const routes = config.routes ?? (config.route ? [config.route] : []);
     let hostname = routes.find(
       (route) => route?.custom_domain === true,
@@ -406,6 +406,7 @@ try {
       sni: hostname,
       path: "/ws",
     });
+    console.log(`管理面板地址：https://${hostname}/`);
     console.log("VLESS / WebSocket（TLS，端口 443），复制到客户端导入：");
     console.log(
       `vless://${encodeURIComponent(secrets.NODE_UUID)}@${hostname}:443?${params}#${encodeURIComponent(config.name)}`,
