@@ -40,7 +40,7 @@ export PATH="$PWD/.tools/node/bin:$PATH"
 
 ### 首次部署
 
-运行 [deploy.sh](deploy.sh)，按提示输入以下参数。**所有输入都隐藏，不显示字符或星号，这是正常行为。** 已有参数也不会回显。
+运行 [deploy.sh](deploy.sh)，按提示输入以下参数。**输入内容直接在终端显示，包括密码和 API Token。** 每项参数输入前会显示简要用途及获取位置。所有输入统一去掉首尾空白字符，保留中间空格；仅输入空白视为留空，按下表使用默认值或保留已有值。脚本不会额外打印已保存的密钥、环境变量值或自动生成的密钥。
 
 | 参数                  | 输入要求                                        | 留空行为                                                   |
 | --------------------- | ----------------------------------------------- | ---------------------------------------------------------- |
@@ -54,6 +54,15 @@ export PATH="$PWD/.tools/node/bin:$PATH"
 | `SUB_TOKEN`           | 至少 32 字符，用于订阅访问                      | 首次随机生成；编辑时保留                                   |
 | `TROJAN_PASSWORD`     | 至少 16 字符，用于 Trojan 认证                  | 首次随机生成；编辑时保留                                   |
 | Cloudflare API Token  | 目标账号的 API Token                            | 使用已配置的 `CLOUDFLARE_API_TOKEN` 环境变量；未配置时必填 |
+
+参数来源速查：
+
+- **Account ID**：Cloudflare 控制台 → Workers & Pages → Account Details → Account ID，也可搜索 `Copy account ID`。[官方获取说明](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/)
+- **Worker 名称**：新应用自行命名；已有应用从 Workers & Pages 列表中获取。
+- **KV Namespace ID**：从控制台的 Workers KV 页面复制已有命名空间 ID；首次部署可直接留空。[KV 官方说明](https://developers.cloudflare.com/kv/get-started/)
+- **自定义域名**：选择已接入当前 Cloudflare 账号的域名下的子域名，例如 `panel.example.com`；也可留空使用 workers.dev。
+- **管理密码及四项应用密钥**：管理密码由你设置，其余首次可留空自动生成。迁移节点时，也可使用原配置的 UUID 或 Trojan 密码；这些都不是 Cloudflare 账号登录凭据。
+- **API Token**：Cloudflare 控制台 → My Profile → API Tokens → Create Token。[官方创建说明](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
 
 API Token 与应用的五项密钥彼此独立。Token 需授权目标账号的 Workers Scripts 编辑、Workers KV Storage 编辑；使用自定义域名还需对应 Zone 的读取及 Workers Routes 编辑权限。使用 workers.dev 时，先在 Cloudflare 控制台启用账号的 workers.dev 子域名。
 
@@ -159,7 +168,7 @@ KV 为最终一致存储，配置保存与重置在不同地区可能延迟生�
 
 | 现象                                | 处理方式                                                                                                                |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 输入时终端没有显示字符              | 脚本主动关闭输入回显；输入完成后按回车即可                                                                              |
+| 粘贴参数时带有首尾空格              | 脚本自动清除首尾空白；中间空格保留，仅空白输入按留空处理                                                                |
 | 提示先安装依赖                      | 在项目目录运行 `./install_deps.sh`                                                                                      |
 | Node.js 下载失败或校验失败          | 检查到 nodejs.org 的 HTTPS 网络、系统时间及 curl，不要跳过校验                                                          |
 | 依赖安装失败                        | 检查 npm registry、网络和 Node.js 运行环境，再运行安装脚本                                                              |

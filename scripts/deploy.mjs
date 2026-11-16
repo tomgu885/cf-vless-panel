@@ -7,7 +7,7 @@ import {
   rm,
 } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,39 +25,18 @@ if (process.argv.slice(2).some((arg) => arg !== "--dry-run")) {
   process.exit(1);
 }
 process.umask(0o077);
-// 隐藏所有输入；参数、密钥都不回显，也不显示已有值。
-let echoDisabled = false;
-function restoreEcho() {
-  if (echoDisabled)
-    spawnSync("stty", ["echo"], { stdio: ["inherit", "ignore", "ignore"] });
-  echoDisabled = false;
-}
-process.on("exit", restoreEcho);
-for (const signal of ["SIGINT", "SIGTERM"])
-  process.on(signal, () => {
-    restoreEcho();
-    process.exit(130);
-  });
-if (process.stdin.isTTY) {
-  const result = spawnSync("stty", ["-echo"], {
-    stdio: ["inherit", "ignore", "ignore"],
-  });
-  if (result.status !== 0) {
-    console.error("无法关闭终端回显，停止。");
-    process.exit(1);
-  }
-  echoDisabled = true;
-}
+// 使用终端正常回显显示输入；不额外打印已保存的密钥或环境变量。
 const input = createInterface({ input: process.stdin, terminal: false });
 const lines = input[Symbol.asyncIterator]();
-async function ask(label, fallback = "") {
+async function ask(label, fallback = "", description = "") {
+  if (description) process.stdout.write("\n" + description + "\n");
   process.stdout.write(
     label + (fallback ? "（留空保留已有值/默认值）" : "") + "：",
   );
   const answer = await lines.next();
   if (answer.done) throw new DeployError("输入已结束，未继续部署。");
   process.stdout.write("\n");
-  return answer.value || fallback;
+  return answer.value.trim() || fallback;
 }
 async function readLocal(path, fallback) {
   try {
@@ -120,15 +99,25 @@ try {
     config.account_id = await ask(
       "Cloudflare Account ID（32 位十六进制）",
       config.account_id,
+      "用途：指定部署账号。获取：Cloudflare 控制台 → Workers & Pages → Account Details → Account ID；也可在控制台搜索 Copy account ID。",
     );
-    config.name = await ask("Worker 名称", config.name);
+    config.name = await ask(
+      "Worker 名称",
+      config.name,
+      "用途：部署的应用名称。新建时自行命名；更新已有应用时，从 Cloudflare 控制台 → Workers & Pages 复制对应 Worker 名称。",
+    );
     const oldId = config.kv_namespaces?.find((n) => n.binding === "CONFIG")?.id;
     const id = await ask(
       "KV Namespace ID（留空自动创建）",
       /^[a-f0-9]{32}$/i.test(oldId ?? "") ? oldId : "",
+      "用途：保存面板配置。获取：Cloudflare 控制台 → Workers KV，找到已有命名空间并复制 Namespace ID；首次部署可留空，由脚本创建。",
     );
     config.kv_namespaces = [{ binding: "CONFIG", id }];
-    const domain = await ask("自定义域名（留空使用 workers.dev；不要带协议）");
+    const domain = await ask(
+      "自定义域名（留空使用 workers.dev；不要带协议）",
+      "",
+      "用途：面板与节点的访问域名。从你已接入当前 Cloudflare 账号的域名中选择一个子域名，例如 panel.example.com；无需自定义域名可留空。",
+    );
     config.workers_dev = !domain;
     config.routes = domain ? [{ pattern: domain, custom_domain: true }] : [];
     if (
@@ -139,21 +128,36 @@ try {
     secrets.ADMIN_PASSWORD = await ask(
       "管理密码（至少 16 字符）",
       secrets.ADMIN_PASSWORD,
+      "用途：登录本项目管理面板。由你自行设置，不是 Cloudflare 登录密码；请使用至少 16 字符的独立密码。",
     );
-    if ((await ask("再次输入管理密码")) !== secrets.ADMIN_PASSWORD)
+    if (
+      (await ask(
+        "再次输入管理密码",
+        "",
+        "再次输入刚才设置或保留的管理密码，用于确认两次输入一致。",
+      )) !== secrets.ADMIN_PASSWORD
+    )
       throw new DeployError("两次管理密码不一致。");
-    for (const name of [
-      "SESSION_SECRET",
-      "NODE_UUID",
-      "SUB_TOKEN",
-      "TROJAN_PASSWORD",
-    ]) {
+    for (const [name, description] of Object.entries({
+      SESSION_SECRET:
+        "用途：签名面板登录会话。无需从 Cloudflare 获取；首次留空自动生成，也可自行提供至少 32 字符的随机密钥。",
+      NODE_UUID:
+        "用途：VLESS 节点认证。首次留空自动生成标准 UUID；迁移已有节点时可从原节点配置获取 UUID。",
+      SUB_TOKEN:
+        "用途：保护订阅链接。无需从 Cloudflare 获取；首次留空自动生成，也可自行提供至少 32 字符的随机令牌。",
+      TROJAN_PASSWORD:
+        "用途：Trojan 节点认证。首次留空自动生成，也可自行设置至少 16 字符的独立密码；迁移时可从原 Trojan 节点配置获取。",
+    })) {
       const fallback =
         secrets[name] ||
         (name === "NODE_UUID"
           ? randomUUID()
           : randomBytes(32).toString("base64url"));
-      secrets[name] = await ask(name + "（首次留空自动生成）", fallback);
+      secrets[name] = await ask(
+        name + "（首次留空自动生成）",
+        fallback,
+        description,
+      );
     }
     // 校验完成后统一落盘，不在输入中途覆盖已有配置。
   }
@@ -163,6 +167,7 @@ try {
     token = await ask(
       "Cloudflare API Token（仅本次使用，不保存）",
       process.env.CLOUDFLARE_API_TOKEN,
+      "用途：授权本次部署。获取：Cloudflare 控制台 → My Profile → API Tokens → Create Token。授予目标账号 Workers Scripts、Workers KV Storage 编辑权限；自定义域名还需对应 Zone 读取及 Workers Routes 编辑权限。",
     );
     if (!token) throw new DeployError("必须提供 Cloudflare API Token。");
     if (
@@ -246,7 +251,6 @@ try {
   process.exitCode = 1;
 } finally {
   input.close();
-  restoreEcho();
 }
 
 async function validateAndSave(config, secrets) {

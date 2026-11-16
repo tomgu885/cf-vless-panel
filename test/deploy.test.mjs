@@ -47,6 +47,7 @@ async function fixture(t) {
  const args=process.argv.slice(2);
  if(args.includes('--secrets-file') && fs.readlinkSync(process.env.WRANGLER_LOG_PATH)==='/dev/null')fs.writeFileSync('called.json',JSON.stringify(args));
  console.log(secrets.ADMIN_PASSWORD);console.error(process.env.CLOUDFLARE_API_TOKEN);
+ if(process.env.TEST_EXPECT_TOKEN && process.env.CLOUDFLARE_API_TOKEN!==process.env.TEST_EXPECT_TOKEN)process.exit(2);
  if(process.env.TEST_WRANGLER_FAIL)process.exit(1);
  `,
   );
@@ -142,4 +143,88 @@ test("dry run with new KV keeps creation pending and removes temporary config", 
   );
   await assert.rejects(stat(join(root, ".wrangler-deploy-check.jsonc")));
   await assert.rejects(stat(join(root, "kv-created")));
+});
+
+test("all entered fields and actions trim whitespace; internal password spaces remain", async (t) => {
+  const root = await fixture(t);
+  const admin = "local test admin password";
+  const values = [
+    account,
+    "test-worker",
+    kv,
+    "panel.example.com",
+    admin,
+    admin,
+    "s".repeat(32),
+    "00000000-0000-4000-8000-000000000001",
+    "u".repeat(32),
+    "trojan test password",
+    token,
+    "deploy",
+  ];
+  const result = run(
+    root,
+    values.map((value) => " \t" + value + "\t "),
+    [],
+    { TEST_EXPECT_TOKEN: token },
+  );
+  assert.equal(result.status, 0);
+  const c = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  const secrets = JSON.parse(
+    await readFile(join(root, ".deploy-secrets.json")),
+  );
+  assert.equal(c.account_id, account);
+  assert.equal(c.name, "test-worker");
+  assert.equal(c.kv_namespaces[0].id, kv);
+  assert.equal(c.routes[0].pattern, "panel.example.com");
+  for (const [index, key] of [
+    "ADMIN_PASSWORD",
+    "SESSION_SECRET",
+    "NODE_UUID",
+    "SUB_TOKEN",
+    "TROJAN_PASSWORD",
+  ].entries())
+    assert.equal(secrets[key], values[[4, 6, 7, 8, 9][index]]);
+  assert.equal(run(root, [" \treuse\t "], ["--dry-run"]).status, 0);
+  const edited = run(
+    root,
+    [
+      " edit ",
+      " \t ",
+      " \t ",
+      " \t ",
+      " \t ",
+      " \t ",
+      " " + admin + " ",
+      " \t ",
+      " \t ",
+      " \t ",
+      " \t ",
+    ],
+    ["--dry-run"],
+  );
+  assert.equal(edited.status, 0);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(root, ".deploy-secrets.json"))),
+    secrets,
+  );
+});
+
+test("prompts explain where external parameters and application credentials come from", async (t) => {
+  const root = await fixture(t);
+  const result = run(root, [...answers(), token, "cancel"]);
+  assert.equal(result.status, 0);
+  for (const hint of [
+    "Copy account ID",
+    "Workers & Pages",
+    "Workers KV",
+    "panel.example.com",
+    "不是 Cloudflare 登录密码",
+    "签名面板登录会话",
+    "VLESS 节点认证",
+    "保护订阅链接",
+    "Trojan 节点认证",
+    "My Profile → API Tokens → Create Token",
+  ])
+    assert.ok(result.output.includes(hint));
 });
