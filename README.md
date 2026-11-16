@@ -13,27 +13,36 @@
 
 ## 部署
 
-需要 Node.js 22+ 和 Cloudflare 账号。当前仓库只使用 `main`，不使用 worktree。
+支持 macOS / Linux 的 x64、ARM64，使用 Bash 3.2+。Linux 需要 glibc 发行版（例如 Ubuntu 22.04/24.04、Debian 12）；不支持 Alpine/musl。当前仓库只使用 `main`，不使用 worktree。
 
-1. `npm ci`，然后 `npx wrangler login`。
-2. `npx wrangler kv namespace create CONFIG`，将返回的 namespace ID 填入 `wrangler.jsonc` 的 `kv_namespaces[0].id`。不要提交账号凭据。
-3. 分别使用下列交互命令设置独立密钥。使用密码管理器生成随机值，不要把值放在命令参数、URL 或日志中。
+```sh
+./install_deps.sh
+./deploy.sh
+```
 
-   ```sh
-   npx wrangler secret put ADMIN_PASSWORD
-   npx wrangler secret put SESSION_SECRET
-   npx wrangler secret put NODE_UUID
-   npx wrangler secret put SUB_TOKEN
-   npx wrangler secret put TROJAN_PASSWORD
-   ```
+`install_deps.sh` 优先复用已有 Node.js 22+ 与 npm；缺少时从 Node.js 官网下载固定版本 22.23.4，验证内置 SHA-256 后安装到项目 `.tools/node`，无需 sudo，也不修改 shell 启动文件。下载需要 curl、tar 及 sha256sum 或 shasum；随后通过 `npm ci` 安装锁定版本依赖，包括 Wrangler。若使用项目内 Node，手动执行 npm 命令前运行 `export PATH="$PWD/.tools/node/bin:$PATH"`。
 
-   管理密码及 Trojan 密码至少 16 字符；签名密钥、订阅令牌至少 32 字符；NODE_UUID 使用标准 UUID。推荐所有密码/令牌均使用至少 32 字符随机值。
+`deploy.sh` 交互收集以下参数，输入全部隐藏且不回显已有值：
 
-4. `npm run check && npm test && npm run test:runtime`。
-5. `npx wrangler deploy`。配置会创建 SQLite Durable Object 类 `XhttpSession`；请先核对 Cloudflare 账号、Worker 名称和计划资源。
-6. 访问 Worker HTTPS 根路径登录。默认节点入口为当前部署域名。客户端导入订阅后即可使用。
+- Cloudflare Account ID 和 Worker 名称。
+- KV Namespace ID：可提供已有 ID，首次留空会在目标账号创建专用 KV。创建结果立即保存，后续部署失败时可直接复用。
+- 自定义域名（可选）：留空使用 workers.dev；填写时需为当前 Cloudflare 账号已管理的域名。
+- 管理密码（至少 16 字符，需重复确认）；SESSION_SECRET、NODE_UUID、SUB_TOKEN、TROJAN_PASSWORD 首次留空自动随机生成，也可手动指定。
+- Cloudflare API Token：隐藏输入，仅用于本次进程，不保存；也支持通过已配置的 `CLOUDFLARE_API_TOKEN` 环境变量提供。
 
-`npm run build` 仅做 dry-run，产物在 `dist/`。部署应使用 Wrangler，它会绑定 KV 和 Durable Objects；不能只粘贴 JS 并期望 XHTTP 自动工作。本仓库不自动触发部署。
+Token 需授权目标账号的 Workers Scripts 编辑、Workers KV Storage 编辑；使用自定义域名还需对应 Zone 的读取及 Workers Routes 编辑权限。使用 workers.dev 时，先在 Cloudflare 控制台启用账号的 workers.dev 子域名。脚本不使用浏览器登录，适用于无桌面的 Linux。
+
+录入后生成 `wrangler.jsonc` 和 `.deploy-secrets.json`，权限均为 `0600`，都已加入 `.gitignore`。前者只含部署配置；后者保存五项独立应用密钥，便于重试与重复部署。请妥善保管本地密钥文件。API Token 不写入任一文件。再次运行可输入 `reuse` 复用配置与密钥，或输入 `edit` 重新设置；编辑时域名留空会改用 workers.dev。
+
+输入 `deploy` 后才创建远端资源并部署。脚本通过 Wrangler 的 `deploy --secrets-file` 同时上传代码与密钥，不先发布缺少密钥的版本。配置同时创建 XHTTP 所需的 Durable Object。Wrangler 原始输出与调试日志被丢弃，避免打印账号、绑定、URL 或密钥；失败时返回非零退出码及不含敏感值的说明，成功后在 Cloudflare 控制台查看访问地址。
+
+仅生成本地配置、密钥并验证构建，不访问 Cloudflare API：
+
+```sh
+./deploy.sh --dry-run
+```
+
+仓库只跟踪 `wrangler.jsonc.example`。该模板采用标准 JSON（也是合法 JSONC）；生成的本地配置请保留标准 JSON 格式，便于脚本再次读取。`npm run types/check/build` 使用模板生成的忽略文件 `.wrangler-check.jsonc`，新克隆无需填写线上参数，也不会使用本地部署配置。`npm run build` 仅 dry-run，产物在 `dist/`。
 
 本地开发：在权限为 0600 的 `.dev.vars` 中设置以上五项测试密钥，然后 `npm run dev`。此文件已忽略，禁止使用线上密钥。Cookie 有 Secure 属性，浏览器测试建议本地 HTTPS。Wrangler 的本地绑定仅用于开发。
 
@@ -68,6 +77,7 @@ npm run types
 npm run check
 npm test
 npm run test:runtime
+npm run test:scripts
 ```
 
 单元测试覆盖分片协议头、错误认证、UDP 拒绝、会话签名与密码轮换、订阅格式隔离。运行时测试使用 Miniflare/workerd、真实本地 TCP echo 服务以及 KV/DO，检查登录、CSRF、WebSocket、XHTTP 和有作用域的重置。构建产物和本地测试数据不提交。

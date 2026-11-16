@@ -4,3 +4,8 @@ dist/
 .dev.vars*
 .env*
 *.log
+wrangler.jsonc
+.deploy-secrets.json
+.tools/
+.wrangler-check.jsonc
+.wrangler-deploy-check.jsonc

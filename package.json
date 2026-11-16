@@ -6,15 +6,16 @@
     "test": "test"
   },
   "scripts": {
-    "dev": "wrangler dev --ip 127.0.0.1",
-    "types": "wrangler types",
-    "check": "wrangler types --check && tsc --noEmit",
+    "dev": "node scripts/wrangler-local.mjs dev --ip 127.0.0.1",
+    "types": "node scripts/wrangler-local.mjs types",
+    "check": "node scripts/wrangler-local.mjs types --check && tsc --noEmit",
     "test": "tsx --test test/core.test.ts",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "build": "node scripts/wrangler-local.mjs deploy --dry-run --outdir dist",
     "test:runtime": "npm run build && tsx --test test/runtime.test.ts",
-    "format": "prettier --write src test *.json *.jsonc README.md",
-    "format:check": "prettier --check src test *.json *.jsonc README.md",
-    "test:interop": "npm run build && tsx test/interop.ts"
+    "format": "prettier --write src test scripts *.json README.md && prettier --write --parser json wrangler.jsonc.example",
+    "format:check": "prettier --check src test scripts *.json README.md && prettier --check --parser json wrangler.jsonc.example",
+    "test:interop": "npm run build && tsx test/interop.ts",
+    "test:scripts": "node --test test/deploy.test.mjs"
   },
   "repository": {
     "type": "git",
