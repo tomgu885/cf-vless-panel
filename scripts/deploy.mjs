@@ -125,19 +125,27 @@ try {
       !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain)
     )
       throw new DeployError("自定义域名格式错误。");
-    secrets.ADMIN_PASSWORD = await ask(
-      "管理密码（至少 16 字符）",
-      secrets.ADMIN_PASSWORD,
-      "用途：登录本项目管理面板。由你自行设置，不是 Cloudflare 登录密码；请使用至少 16 字符的独立密码。",
+    const adminPassword = await ask(
+      "管理密码（手动输入至少 16 字符；首次留空自动生成）",
+      "",
+      "用途：登录本项目管理面板，不是 Cloudflare 登录密码。首次留空自动生成随机密码；已有配置时留空保留原密码。",
     );
-    if (
-      (await ask(
-        "再次输入管理密码",
-        "",
-        "再次输入刚才设置或保留的管理密码，用于确认两次输入一致。",
-      )) !== secrets.ADMIN_PASSWORD
-    )
-      throw new DeployError("两次管理密码不一致。");
+    if (adminPassword) {
+      if (
+        (await ask(
+          "再次输入管理密码",
+          "",
+          "再次输入刚才手动设置的管理密码，用于确认两次输入一致。",
+        )) !== adminPassword
+      )
+        throw new DeployError("两次管理密码不一致。");
+      secrets.ADMIN_PASSWORD = adminPassword;
+    } else if (!secrets.ADMIN_PASSWORD) {
+      secrets.ADMIN_PASSWORD = randomBytes(32).toString("base64url");
+      console.log(
+        "已生成随机管理密码；配置保存后可在本地 .deploy-secrets.json 的 ADMIN_PASSWORD 查看。",
+      );
+    }
     for (const [name, description] of Object.entries({
       SESSION_SECRET:
         "用途：签名面板登录会话。无需从 Cloudflare 获取；首次留空自动生成，也可自行提供至少 32 字符的随机密钥。",

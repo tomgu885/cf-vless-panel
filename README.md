@@ -48,7 +48,7 @@ export PATH="$PWD/.tools/node/bin:$PATH"
 | Worker 名称           | 1–63 个小写字母、数字或连字符，以字母或数字开头 | 默认 `cf-vless-panel`；编辑时保留已有值                    |
 | KV Namespace ID       | 目标账号下的 32 位十六进制 ID                   | 首次自动创建；编辑时保留已有有效 ID                        |
 | 自定义域名            | 当前账号管理的域名，不带协议、端口或路径        | 使用 workers.dev，编辑时也如此                             |
-| 管理密码              | 至少 16 字符，随后需再次输入确认                | 首次必填；编辑时保留已有密码，但仍须再次输入确认           |
+| 管理密码              | 手动输入至少 16 字符，需再次输入确认            | 首次随机生成；编辑时保留已有密码，两者均不要求再次确认     |
 | `SESSION_SECRET`      | 至少 32 字符，用于登录会话签名                  | 首次随机生成；编辑时保留                                   |
 | `NODE_UUID`           | 标准 UUID，用于 VLESS 认证                      | 首次随机生成；编辑时保留                                   |
 | `SUB_TOKEN`           | 至少 32 字符，用于订阅访问                      | 首次随机生成；编辑时保留                                   |
@@ -61,8 +61,10 @@ export PATH="$PWD/.tools/node/bin:$PATH"
 - **Worker 名称**：新应用自行命名；已有应用从 Workers & Pages 列表中获取。
 - **KV Namespace ID**：从控制台的 Workers KV 页面复制已有命名空间 ID；首次部署可直接留空。[KV 官方说明](https://developers.cloudflare.com/kv/get-started/)
 - **自定义域名**：选择已接入当前 Cloudflare 账号的域名下的子域名，例如 `panel.example.com`；也可留空使用 workers.dev。
-- **管理密码及四项应用密钥**：管理密码由你设置，其余首次可留空自动生成。迁移节点时，也可使用原配置的 UUID 或 Trojan 密码；这些都不是 Cloudflare 账号登录凭据。
+- **管理密码及四项应用密钥**：五项均可在首次部署时留空自动生成，也可手动指定。迁移节点时，也可使用原配置的 UUID 或 Trojan 密码；这些都不是 Cloudflare 账号登录凭据。
 - **API Token**：Cloudflare 控制台 → My Profile → API Tokens → Create Token。[官方创建说明](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
+
+管理密码首次留空（包括仅输入空白）时，脚本使用加密安全随机源生成 32 字节随机数据，并以 Base64URL 编码保存为 43 字符密码，跳过二次确认。配置保存后，可在本地编辑器中打开 `.deploy-secrets.json`，查看 `ADMIN_PASSWORD` 用于面板登录；脚本不会自动打印生成的密码。重复部署或编辑已有配置时，留空保留原密码；只有手动输入新密码时才要求再次确认。
 
 API Token 与应用的五项密钥彼此独立。Token 需授权目标账号的 Workers Scripts 编辑、Workers KV Storage 编辑；使用自定义域名还需对应 Zone 的读取及 Workers Routes 编辑权限。使用 workers.dev 时，先在 Cloudflare 控制台启用账号的 workers.dev 子域名。
 

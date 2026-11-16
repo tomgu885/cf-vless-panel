@@ -213,7 +213,6 @@ test("all entered fields and actions trim whitespace; internal password spaces r
       " \t ",
       " \t ",
       " \t ",
-      " " + admin + " ",
       " \t ",
       " \t ",
       " \t ",
@@ -331,4 +330,49 @@ test("disabled workers.dev without custom domain does not generate an inaccessib
   assert.ok(result.output.includes("workers.dev 已禁用"));
   assert.ok(!result.output.includes("vless://"));
   await assert.rejects(stat(join(root, "api-calls.txt")));
+});
+
+test("blank admin password generates a private random password without confirmation", async (t) => {
+  const generated = [];
+  for (const blank of ["", " \t "]) {
+    const root = await fixture(t);
+    const lines = answers();
+    lines.splice(4, 2, blank);
+    const result = run(root, lines, ["--dry-run"]);
+    assert.equal(result.status, 0);
+    assert.ok(!result.output.includes("再次输入管理密码"));
+    const secrets = JSON.parse(
+      await readFile(join(root, ".deploy-secrets.json")),
+    );
+    assert.match(secrets.ADMIN_PASSWORD, /^[A-Za-z0-9_-]{43}$/);
+    assert.ok(!result.output.includes(secrets.ADMIN_PASSWORD));
+    assert.equal(
+      (await stat(join(root, ".deploy-secrets.json"))).mode & 0o777,
+      0o600,
+    );
+    generated.push(secrets.ADMIN_PASSWORD);
+    assert.equal(run(root, ["reuse"], ["--dry-run"]).status, 0);
+    assert.equal(run(root, ["edit", ...lines], ["--dry-run"]).status, 0);
+    assert.equal(
+      JSON.parse(await readFile(join(root, ".deploy-secrets.json")))
+        .ADMIN_PASSWORD,
+      secrets.ADMIN_PASSWORD,
+    );
+  }
+  assert.notEqual(generated[0], generated[1]);
+});
+
+test("manually entered admin passwords still require matching confirmation and minimum length", async (t) => {
+  const root = await fixture(t);
+  const mismatch = answers();
+  mismatch[5] = "different-test-password";
+  const result = run(root, mismatch, ["--dry-run"]);
+  assert.equal(result.status, 1);
+  assert.ok(result.output.includes("两次管理密码不一致"));
+  await assert.rejects(stat(join(root, ".deploy-secrets.json")));
+  const short = answers();
+  short[4] = short[5] = "short";
+  const invalid = run(root, short, ["--dry-run"]);
+  assert.equal(invalid.status, 1);
+  assert.ok(invalid.output.includes("ADMIN_PASSWORD 长度不足"));
 });
