@@ -13,6 +13,49 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 class DeployError extends Error {}
 
+const rules = {
+  account_id: (value) =>
+    /^[a-f0-9]{32}$/i.test(value ?? "")
+      ? ""
+      : "Account ID 必须是 32 位十六进制字符。",
+  name: (value) =>
+    typeof value === "string" && /^[a-z0-9][a-z0-9-]{0,62}$/.test(value)
+      ? ""
+      : "Worker 名称需为 1–63 个小写字母、数字或连字符，并以字母或数字开头。",
+  id: (value) =>
+    value === "" || /^[a-f0-9]{32}$/i.test(value ?? "")
+      ? ""
+      : "KV Namespace ID 必须是 32 位十六进制字符，或留空自动创建。",
+  domain: (value) =>
+    value === "" ||
+    (typeof value === "string" &&
+      value.length <= 253 &&
+      value.split(".").every((label) => label.length <= 63) &&
+      /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(value))
+      ? ""
+      : "自定义域名格式错误；请填写纯域名，不要带协议、端口或路径，也可留空。",
+  ADMIN_PASSWORD: (value) =>
+    typeof value === "string" && value.length >= 16
+      ? ""
+      : "ADMIN_PASSWORD 至少需要 16 字符。",
+  SESSION_SECRET: (value) =>
+    typeof value === "string" && value.length >= 32
+      ? ""
+      : "SESSION_SECRET 至少需要 32 字符。",
+  SUB_TOKEN: (value) =>
+    typeof value === "string" && value.length >= 32
+      ? ""
+      : "SUB_TOKEN 至少需要 32 字符。",
+  TROJAN_PASSWORD: (value) =>
+    typeof value === "string" && value.length >= 16
+      ? ""
+      : "TROJAN_PASSWORD 至少需要 16 字符。",
+  NODE_UUID: (value) =>
+    /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value ?? "")
+      ? ""
+      : "NODE_UUID 必须是标准 UUID（8-4-4-4-12）。",
+};
+
 const dryRun = process.argv.includes("--dry-run");
 if (process.argv.includes("--help")) {
   console.log(
@@ -28,15 +71,25 @@ process.umask(0o077);
 // 使用终端正常回显显示输入；不额外打印已保存的密钥或环境变量。
 const input = createInterface({ input: process.stdin, terminal: false });
 const lines = input[Symbol.asyncIterator]();
-async function ask(label, fallback = "", description = "") {
+async function ask(
+  label,
+  fallback = "",
+  description = "",
+  validate = () => "",
+) {
   if (description) process.stdout.write("\n" + description + "\n");
-  process.stdout.write(
-    label + (fallback ? "（留空保留已有值/默认值）" : "") + "：",
-  );
-  const answer = await lines.next();
-  if (answer.done) throw new DeployError("输入已结束，未继续部署。");
-  process.stdout.write("\n");
-  return answer.value.trim() || fallback;
+  while (true) {
+    process.stdout.write(
+      label + (fallback ? "（留空保留已有值/默认值）" : "") + "：",
+    );
+    const answer = await lines.next();
+    if (answer.done) throw new DeployError("输入已结束，未继续部署。");
+    process.stdout.write("\n");
+    const value = answer.value.trim() || fallback;
+    const error = validate(value);
+    if (!error) return value;
+    console.log(error + " 请重新输入。");
+  }
 }
 async function readLocal(path, fallback) {
   try {
@@ -91,54 +144,100 @@ try {
   let config = structuredClone(previous ?? template);
   if (
     previous &&
-    (await ask("检测到本地配置。输入 reuse 复用；输入 edit 重新设置")) ===
-      "reuse"
+    (await ask(
+      "检测到本地配置。输入 reuse 复用；输入 edit 重新设置",
+      "",
+      "",
+      (value) =>
+        ["reuse", "edit"].includes(value) ? "" : "请输入 reuse 或 edit。",
+    )) === "reuse"
   ) {
-    // 仍要求核对认证与部署意图；不旋转已有密钥。
+    // 已保存的数据在读取边界校验；只重新询问需要修正的字段。
+    const namespace = config.kv_namespaces.find((n) => n.binding === "CONFIG");
+    for (const [object, keys] of [
+      [config, ["account_id", "name"]],
+      [namespace, ["id"]],
+      [
+        secrets,
+        [
+          "ADMIN_PASSWORD",
+          "SESSION_SECRET",
+          "NODE_UUID",
+          "SUB_TOKEN",
+          "TROJAN_PASSWORD",
+        ],
+      ],
+    ]) {
+      for (const key of keys) {
+        if (rules[key](object[key])) {
+          console.log(`本地 ${key} 无效，需要修正。`);
+          object[key] = await ask(key, "", "", rules[key]);
+          if (key === "ADMIN_PASSWORD") {
+            await ask("再次输入管理密码", "", "", (value) =>
+              value === object[key] ? "" : "两次管理密码不一致。",
+            );
+          }
+        }
+      }
+    }
+    for (const route of config.routes ?? (config.route ? [config.route] : [])) {
+      if (route?.custom_domain && rules.domain(route.pattern)) {
+        route.pattern = await ask(
+          "自定义域名",
+          "",
+          "本地自定义域名无效，请重新填写纯域名。",
+          (value) =>
+            value
+              ? rules.domain(value)
+              : "已有自定义域名不可为空，请输入域名。",
+        );
+      }
+    }
   } else {
     config.account_id = await ask(
       "Cloudflare Account ID（32 位十六进制）",
       config.account_id,
       "用途：指定部署账号。获取：Cloudflare 控制台 → Workers & Pages → Account Details → Account ID；也可在控制台搜索 Copy account ID。",
+      rules.account_id,
     );
     config.name = await ask(
       "Worker 名称",
       config.name,
       "用途：部署的应用名称。新建时自行命名；更新已有应用时，从 Cloudflare 控制台 → Workers & Pages 复制对应 Worker 名称。",
+      rules.name,
     );
     const oldId = config.kv_namespaces?.find((n) => n.binding === "CONFIG")?.id;
     const id = await ask(
       "KV Namespace ID（留空自动创建）",
       /^[a-f0-9]{32}$/i.test(oldId ?? "") ? oldId : "",
       "用途：保存面板配置。获取：Cloudflare 控制台 → Workers KV，找到已有命名空间并复制 Namespace ID；首次部署可留空，由脚本创建。",
+      rules.id,
     );
     config.kv_namespaces = [{ binding: "CONFIG", id }];
     const domain = await ask(
       "自定义域名（留空使用 workers.dev；不要带协议）",
       "",
       "用途：面板与节点的访问域名。从你已接入当前 Cloudflare 账号的域名中选择一个子域名，例如 panel.example.com；无需自定义域名可留空。",
+      rules.domain,
     );
     config.workers_dev = !domain;
     config.routes = domain ? [{ pattern: domain, custom_domain: true }] : [];
-    if (
-      domain &&
-      !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(domain)
-    )
-      throw new DeployError("自定义域名格式错误。");
     const adminPassword = await ask(
       "管理密码（手动输入至少 16 字符；首次留空自动生成）",
       "",
       "用途：登录本项目管理面板，不是 Cloudflare 登录密码。首次留空自动生成随机密码；已有配置时留空保留原密码。",
+      (value) =>
+        value || secrets.ADMIN_PASSWORD
+          ? rules.ADMIN_PASSWORD(value || secrets.ADMIN_PASSWORD)
+          : "",
     );
     if (adminPassword) {
-      if (
-        (await ask(
-          "再次输入管理密码",
-          "",
-          "再次输入刚才手动设置的管理密码，用于确认两次输入一致。",
-        )) !== adminPassword
-      )
-        throw new DeployError("两次管理密码不一致。");
+      await ask(
+        "再次输入管理密码",
+        "",
+        "再次输入刚才手动设置的管理密码，用于确认两次输入一致。",
+        (value) => (value === adminPassword ? "" : "两次管理密码不一致。"),
+      );
       secrets.ADMIN_PASSWORD = adminPassword;
     } else if (!secrets.ADMIN_PASSWORD) {
       secrets.ADMIN_PASSWORD = randomBytes(32).toString("base64url");
@@ -165,22 +264,33 @@ try {
         name + "（首次留空自动生成）",
         fallback,
         description,
+        rules[name],
       );
     }
     // 校验完成后统一落盘，不在输入中途覆盖已有配置。
   }
-  await validateAndSave(config, secrets);
+  await save(".deploy-secrets.json", secrets);
+  await save("wrangler.jsonc", config);
   let token = "";
   if (!dryRun) {
     token = await ask(
       "Cloudflare API Token（仅本次使用，不保存）",
       process.env.CLOUDFLARE_API_TOKEN,
       "用途：授权本次部署。获取：Cloudflare 控制台 → My Profile → API Tokens → Create Token。授予目标账号 Workers Scripts、Workers KV Storage 编辑权限；自定义域名还需对应 Zone 读取及 Workers Routes 编辑权限。",
+      (value) =>
+        typeof value === "string" && /^[\x21-\x7e]+$/.test(value)
+          ? ""
+          : "API Token 必填且不能包含空白或非 ASCII 字符。",
     );
-    if (!token) throw new DeployError("必须提供 Cloudflare API Token。");
     if (
       (await ask(
-        "将向录入的账号/Worker 部署，并创建所需资源。输入 deploy 执行",
+        "将向录入的账号/Worker 部署，并创建所需资源。输入 deploy 执行，cancel 取消",
+        "",
+        "",
+        (value) =>
+          ["deploy", "cancel"].includes(value)
+            ? ""
+            : "请输入 deploy 或 cancel。",
       )) !== "deploy"
     ) {
       console.log("已保存本地配置，未执行远端操作。");
@@ -307,30 +417,4 @@ try {
   process.exitCode = 1;
 } finally {
   input.close();
-}
-
-async function validateAndSave(config, secrets) {
-  if (!/^[a-f0-9]{32}$/i.test(config.account_id ?? ""))
-    throw new DeployError("Account ID 格式错误。");
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(config.name ?? ""))
-    throw new DeployError("Worker 名称格式错误。");
-  const id = config.kv_namespaces?.find((n) => n.binding === "CONFIG")?.id;
-  if (id !== "" && !/^[a-f0-9]{32}$/i.test(id ?? ""))
-    throw new DeployError("KV Namespace ID 格式错误。");
-  for (const [key, min] of Object.entries({
-    ADMIN_PASSWORD: 16,
-    SESSION_SECRET: 32,
-    SUB_TOKEN: 32,
-    TROJAN_PASSWORD: 16,
-  }))
-    if (typeof secrets[key] !== "string" || secrets[key].length < min)
-      throw new DeployError(key + " 长度不足。");
-  if (
-    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(
-      secrets.NODE_UUID ?? "",
-    )
-  )
-    throw new DeployError("NODE_UUID 格式错误。");
-  await save(".deploy-secrets.json", secrets);
-  await save("wrangler.jsonc", config);
 }

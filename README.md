@@ -64,11 +64,15 @@ export PATH="$PWD/.tools/node/bin:$PATH"
 - **管理密码及四项应用密钥**：五项均可在首次部署时留空自动生成，也可手动指定。迁移节点时，也可使用原配置的 UUID 或 Trojan 密码；这些都不是 Cloudflare 账号登录凭据。
 - **API Token**：Cloudflare 控制台 → My Profile → API Tokens → Create Token。[官方创建说明](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/)
 
+每项输入都在去除首尾空白、应用留空规则后立即校验。错误会当场显示字段要求，并重新询问当前字段；已填对的其他字段会保留。管理密码长度不够时不会进入确认步骤，两次密码不一致时只需重输确认密码。选择 `reuse` 时也会检查已保存的值，仅重新询问其中需要修正的字段。
+
+输入校验覆盖 ID、Worker 名称、域名、UUID 的格式，密码和应用密钥的长度，API Token 的非空及合法字符，以及 `reuse/edit`、`deploy/cancel` 选项。API Token 不接受内部空白或非 ASCII 字符，不限定前缀或固定长度。这些是本地输入检查，不代表已核实 Token 有效性、Cloudflare 权限、KV 归属或域名绑定；远端检查仍在确认部署后的请求中进行。输入结束（EOF）或按 Ctrl+C 可退出，不会继续部署。
+
 管理密码首次留空（包括仅输入空白）时，脚本使用加密安全随机源生成 32 字节随机数据，并以 Base64URL 编码保存为 43 字符密码，跳过二次确认。配置保存后，可在本地编辑器中打开 `.deploy-secrets.json`，查看 `ADMIN_PASSWORD` 用于面板登录；脚本不会自动打印生成的密码。重复部署或编辑已有配置时，留空保留原密码；只有手动输入新密码时才要求再次确认。
 
 API Token 与应用的五项密钥彼此独立。Token 需授权目标账号的 Workers Scripts 编辑、Workers KV Storage 编辑；使用自定义域名还需对应 Zone 的读取及 Workers Routes 编辑权限。使用 workers.dev 时，先在 Cloudflare 控制台启用账号的 workers.dev 子域名。
 
-参数校验通过后，脚本保存本地配置与应用密钥。输入 `deploy` 才会创建远端资源和部署，输入其他内容则保留本地文件并退出。
+参数校验通过后，脚本保存本地配置与应用密钥。输入 `deploy` 才会创建远端资源和部署，输入 `cancel` 则保留本地文件并退出；输入其他内容会提示重新输入。
 
 部署过程会：
 

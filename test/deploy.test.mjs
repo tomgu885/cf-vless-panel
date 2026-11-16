@@ -374,5 +374,119 @@ test("manually entered admin passwords still require matching confirmation and m
   short[4] = short[5] = "short";
   const invalid = run(root, short, ["--dry-run"]);
   assert.equal(invalid.status, 1);
-  assert.ok(invalid.output.includes("ADMIN_PASSWORD 长度不足"));
+  assert.ok(invalid.output.includes("ADMIN_PASSWORD 至少需要 16 字符"));
+});
+
+test("invalid values are retried at each prompt without losing earlier valid answers", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const uuid = "00000000-0000-4000-8000-000000000001";
+  const result = run(
+    root,
+    [
+      "wrong-mode",
+      "edit",
+      "bad-account",
+      account,
+      "Invalid Worker",
+      "test-worker",
+      "bad-kv",
+      kv,
+      "https://panel.example.com",
+      "panel.example.com",
+      "short",
+      password,
+      "mismatch",
+      password,
+      "short",
+      "s".repeat(32),
+      "invalid-uuid",
+      uuid,
+      "short",
+      "u".repeat(32),
+      "short",
+      "trojan-test-password",
+      "",
+      "bad token",
+      token,
+      "typo",
+      "deploy",
+    ],
+    [],
+    { TEST_EXPECT_TOKEN: token },
+  );
+  assert.equal(result.status, 0);
+  const expectedErrors = [
+    "请输入 reuse 或 edit。",
+    "Account ID 必须是",
+    "Worker 名称需为",
+    "KV Namespace ID 必须是",
+    "自定义域名格式错误",
+    "ADMIN_PASSWORD 至少需要",
+    "两次管理密码不一致",
+    "SESSION_SECRET 至少需要",
+    "NODE_UUID 必须是",
+    "SUB_TOKEN 至少需要",
+    "TROJAN_PASSWORD 至少需要",
+    "API Token 必填",
+    "请输入 deploy 或 cancel。",
+  ];
+  let last = -1;
+  for (const error of expectedErrors) {
+    const index = result.output.indexOf(error);
+    assert.ok(index > last, "errors should appear at their input step");
+    last = index;
+  }
+  assert.ok(
+    result.output.indexOf("Account ID 必须是") <
+      result.output.indexOf("用途：部署的应用名称"),
+  );
+  assert.ok(
+    result.output.indexOf("ADMIN_PASSWORD 至少需要") <
+      result.output.indexOf("再次输入管理密码"),
+  );
+  const c = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  assert.equal(c.account_id, account);
+  assert.equal(c.name, "test-worker");
+  assert.equal(c.kv_namespaces[0].id, kv);
+  assert.equal(c.routes[0].pattern, "panel.example.com");
+  const secrets = JSON.parse(
+    await readFile(join(root, ".deploy-secrets.json")),
+  );
+  assert.equal(secrets.ADMIN_PASSWORD, password);
+  assert.equal(secrets.NODE_UUID, uuid);
+  assert.equal(secrets.SESSION_SECRET, "s".repeat(32));
+  assert.equal(secrets.SUB_TOKEN, "u".repeat(32));
+  assert.equal(secrets.TROJAN_PASSWORD, "trojan-test-password");
+});
+
+test("EOF during retry does not advance to the next field or save partial configuration", async (t) => {
+  const root = await fixture(t);
+  const result = run(root, ["invalid-account"], ["--dry-run"]);
+  assert.equal(result.status, 1);
+  assert.ok(result.output.includes("请重新输入"));
+  assert.ok(!result.output.includes("用途：部署的应用名称"));
+  await assert.rejects(stat(join(root, "wrangler.jsonc")));
+  await assert.rejects(stat(join(root, "called.json")));
+});
+
+test("reuse prompts only for invalid saved fields and allows correcting them", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const before = JSON.parse(await readFile(join(root, ".deploy-secrets.json")));
+  const broken = { ...before, NODE_UUID: "bad-uuid" };
+  await writeFile(join(root, ".deploy-secrets.json"), JSON.stringify(broken));
+  const result = run(
+    root,
+    ["reuse", "still-bad", before.NODE_UUID],
+    ["--dry-run"],
+  );
+  assert.equal(result.status, 0);
+  assert.ok(result.output.includes("本地 NODE_UUID 无效"));
+  assert.ok(result.output.includes("NODE_UUID 必须是"));
+  assert.ok(!result.output.includes("Cloudflare Account ID"));
+  assert.deepEqual(
+    JSON.parse(await readFile(join(root, ".deploy-secrets.json"))),
+    before,
+  );
 });
