@@ -78,16 +78,52 @@ API Token 仅用于本次进程，不保存。脚本丢弃 Wrangler 原始输出
 
 ### 部署结束后的 VLESS 链接
 
-部署成功后，最后一行是 `vless://` 链接，可直接复制到支持 VLESS / WebSocket 的客户端导入。连接参数与本项目入站一致：使用本次部署的 `NODE_UUID`、端口 `443`、TLS、WebSocket 和路径 `/ws`，节点地址、SNI 与 WebSocket Host 使用同一域名。
+运行 `./deploy.sh` 并确认部署后，**只有部署成功且域名确定时，脚本才会在终端最后一行输出完整的 `vless://` 节点链接**。复制这一整行，在支持 VLESS / WebSocket 的客户端中选择“从剪贴板导入”或“导入分享链接”即可。
 
-域名按以下顺序选择：
+输出结构如下，尖括号内容仅为占位符，不是真实配置，不能直接导入：
 
-1. 优先使用 `wrangler.jsonc` 的 `routes` 中第一个 `custom_domain: true` 条目的 `pattern`；也支持单条 `route` 配置。普通路径路由不作为自定义域名。
-2. 未配置自定义域名时，通过 [Cloudflare Workers Subdomain API](https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/methods/get/) 读取账号实际分配的子域名，生成 `<Worker 名称>.<账号子域名>.workers.dev`。
+```text
+部署成功。
+VLESS / WebSocket（TLS，端口 443），复制到客户端导入：
+vless://<NODE_UUID>@<DOMAIN>:443?encryption=none&security=tls&type=ws&host=<DOMAIN>&sni=<DOMAIN>&path=%2Fws#<WORKER_NAME>
+```
 
-`--dry-run`、取消部署或部署失败时不输出节点链接。若部署已成功但域名查询失败，脚本会明确提示“部署已成功”及无法生成链接的原因，并返回非零退出码；不会猜测域名。如果未配置自定义域名且 `workers_dev` 被禁用，也不会生成不可访问的链接。
+| 链接字段                  | 来源或固定值                                         |
+| ------------------------- | ---------------------------------------------------- |
+| 用户 ID                   | 本次部署所用 `.deploy-secrets.json` 中的 `NODE_UUID` |
+| 服务器地址、`host`、`sni` | 按下述优先级选出的同一个域名                         |
+| 端口                      | `443`                                                |
+| `encryption` / `security` | `none` / `tls`                                       |
+| `type` / `path`           | `ws` / `/ws`（链接中编码为 `%2Fws`）                 |
+| `#` 后的节点名称          | `wrangler.jsonc` 的 `name`，经过 URL 编码            |
 
-节点链接包含 UUID，持有者可以使用节点，请只在需要导入客户端时分享。
+这是一个 VLESS / WebSocket 节点分享链接，不是订阅地址。需要订阅、Trojan 或 XHTTP 节点时，访问同一域名的 HTTPS 根路径，登录面板，在“概览 → 订阅中心”获取。
+
+#### 域名选择优先级
+
+1. **优先使用本地 Worker 配置中的自定义域名。** 从本次部署使用的 `wrangler.jsonc` 的 `routes` 数组中，按顺序取第一个 `custom_domain: true` 条目的 `pattern`。未设置 `routes` 时，也支持单条 `route` 对象。多个自定义域名只选第一个；类似 `example.com/*` 的普通路径路由不参与选择。找到自定义域名后，不再查询 workers.dev 域名。
+2. **没有自定义域名时，使用 Cloudflare 分配的 workers.dev 域名。** 脚本通过 [Workers Subdomain API](https://developers.cloudflare.com/api/resources/workers/subresources/subdomains/methods/get/) 读取目标账号实际的 `subdomain`，与本次配置的 Worker 名称组合成 `<Worker 名称>.<账号子域名>.workers.dev`，不会猜测账号子域名。
+
+以下域名仅用于说明规则：
+
+| 配置情况                                                                 | 最终用于链接的域名                 |
+| ------------------------------------------------------------------------ | ---------------------------------- |
+| 自定义域名为 `panel.example.com`，同时也启用 workers.dev                 | `panel.example.com`                |
+| 有多个自定义域名，依次为 `first.example.com`、`second.example.com`       | `first.example.com`                |
+| 无自定义域名，Worker 名称为 `my-worker`，API 返回账号子域名 `my-account` | `my-worker.my-account.workers.dev` |
+
+这里的“自定义域名”指本地 `wrangler.jsonc` 中的配置。脚本不会额外扫描 Cloudflare 控制台上单独绑定的自定义域名；如需优先使用该域名，请通过部署脚本的 `edit` 流程或本地配置将其纳入本次部署。
+
+#### 哪些情况下不会输出链接
+
+| 情况                                              | 结果                                                                 |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| 使用 `./deploy.sh --dry-run`                      | 只验证本地构建，不输出线上节点链接                                   |
+| 取消部署或部署失败                                | 不输出节点链接                                                       |
+| 部署已成功，但 Cloudflare 域名查询失败            | 提示“部署已成功”及获取域名失败，返回非零退出码；不生成猜测域名的链接 |
+| 无自定义域名，且 `workers_dev` 显式设置为 `false` | 提示 workers.dev 已禁用，返回非零退出码；不输出不可访问的链接        |
+
+域名查询失败不代表已经发布的 Worker 被撤销；可在 Cloudflare 控制台核对部署结果。节点链接包含 UUID，持有者可以使用节点，请妥善保管。
 
 ### 先验证，不部署
 
