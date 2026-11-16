@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { reportError } from "../src/debug.ts";
 import assert from "node:assert/strict";
 import { Reader, concat } from "../src/bytes.ts";
 import { handshake } from "../src/protocol.ts";
@@ -88,4 +89,35 @@ test("subscriptions isolate outbound credentials and client transports", async (
     if (format !== "uri") assert.ok(!body.includes("xhttp"));
     else assert.ok(body.includes("mode=packet-up"));
   }
+});
+
+test("debug diagnostics retain type and source locations without secret messages or paths", (t) => {
+  const calls: Error[] = [];
+  t.mock.method(console, "error", (error: Error) => calls.push(error));
+  const failure = new TypeError("test-secret-password", {
+    cause: "test-secret-token",
+  });
+  failure.stack = `TypeError: test-secret-password
+    at secretFunction (https://panel.test/sub/test-secret-token/index.js:123:45)
+    at dynamic-secret-function (/private/test-secret-password/src/auth.ts:12:9)
+    at https://panel.test/sub/test-secret-token:20:3`;
+  reportError({}, "fetch", failure);
+  reportError({ DEBUG: "false" }, "fetch", failure);
+  assert.equal(calls.length, 0);
+  reportError({ DEBUG: "true" }, "fetch", failure);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "TypeError");
+  assert.equal(
+    calls[0].stack,
+    "TypeError: worker.fetch failed\n    at index.js:123:45\n    at auth.ts:12:9",
+  );
+  assert.equal(calls[0].cause, undefined);
+  assert.ok(!calls[0].message.includes("test-secret"));
+  failure.name = "test-secret-name";
+  reportError({ DEBUG: "true" }, "websocket", failure);
+  assert.equal(calls[1].name, "Error");
+  reportError({ DEBUG: "true" }, "xhttp.stream", {
+    password: "test-secret-password",
+  });
+  assert.equal(calls[2].stack, "Error: worker.xhttp.stream failed\n");
 });

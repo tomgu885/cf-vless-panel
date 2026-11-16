@@ -57,14 +57,27 @@ const rules = {
 };
 
 const dryRun = process.argv.includes("--dry-run");
+const reDeploy = process.argv.includes("--re-deploy");
+const debugOn = process.argv.includes("--debug");
+const debugOff = process.argv.includes("--no-debug");
 if (process.argv.includes("--help")) {
   console.log(
-    "用法：./deploy.sh [--dry-run]\n交互生成本地配置与密钥，再部署。--dry-run 仅本地构建，不调用 Cloudflare API。",
+    "用法：./deploy.sh [--re-deploy] [--debug | --no-debug] [--dry-run]\n--re-deploy 复用完整配置与密钥，并核实远端已有部署。\n--debug 开启错误日志与 source maps；--no-debug 关闭。再次部署未指定时交互选择。\n--dry-run 仅本地构建，不调用 Cloudflare API。",
   );
   process.exit(0);
 }
-if (process.argv.slice(2).some((arg) => arg !== "--dry-run")) {
-  console.error("不支持的参数；运行 ./deploy.sh --help 查看用法。");
+if (
+  process.argv
+    .slice(2)
+    .some(
+      (arg) =>
+        !["--dry-run", "--re-deploy", "--debug", "--no-debug"].includes(arg),
+    ) ||
+  (debugOn && debugOff)
+) {
+  console.error(
+    "不支持的参数或同时指定了 --debug/--no-debug；运行 ./deploy.sh --help 查看用法。",
+  );
   process.exit(1);
 }
 process.umask(0o077);
@@ -146,7 +159,49 @@ try {
   const previous = await readLocal("wrangler.jsonc", null);
   const secrets = await readLocal(".deploy-secrets.json", {});
   let config = structuredClone(previous ?? template);
-  if (
+  if (reDeploy) {
+    const namespace = previous?.kv_namespaces?.find(
+      (n) => n.binding === "CONFIG",
+    );
+    if (
+      !previous ||
+      rules.account_id(previous.account_id) ||
+      rules.name(previous.name) ||
+      !namespace?.id ||
+      rules.id(namespace.id) ||
+      typeof previous.main !== "string" ||
+      !previous.main.trim() ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(previous.compatibility_date ?? "") ||
+      !previous.durable_objects?.bindings?.some(
+        (b) => b.name === "XHTTP" && b.class_name === "XhttpSession",
+      )
+    ) {
+      throw new DeployError(
+        "--re-deploy 需要完整的 wrangler.jsonc（账号、Worker、入口、兼容日期、KV 和 XHTTP 绑定）；请先运行普通部署补齐配置。",
+      );
+    }
+    for (const key of [
+      "ADMIN_PASSWORD",
+      "SESSION_SECRET",
+      "NODE_UUID",
+      "SUB_TOKEN",
+      "TROJAN_PASSWORD",
+    ]) {
+      if (rules[key](secrets[key]))
+        throw new DeployError(
+          "--re-deploy 需要完整有效的 .deploy-secrets.json；请先运行普通部署补齐密钥。",
+        );
+    }
+    for (const route of previous.routes ??
+      (previous.route ? [previous.route] : [])) {
+      if (
+        route?.custom_domain &&
+        (!route.pattern || rules.domain(route.pattern))
+      )
+        throw new DeployError("本地自定义域名无效，请先修正配置。");
+    }
+    console.log("已复用本地配置与密钥，不重新创建 KV 或生成密码。");
+  } else if (
     previous &&
     (await ask(
       "检测到本地配置。输入 reuse 复用；输入 edit 重新设置",
@@ -273,8 +328,33 @@ try {
     }
     // 校验完成后统一落盘，不在输入中途覆盖已有配置。
   }
-  await save(".deploy-secrets.json", secrets);
-  await save("wrangler.jsonc", config);
+  let debug = config.vars?.DEBUG === "true";
+  if (debugOn || debugOff) debug = debugOn;
+  else if (reDeploy) {
+    debug =
+      (await ask(
+        "调试模式：on 开启，off 关闭",
+        debug ? "on" : "off",
+        "开启后记录脱敏错误定位信息并上传 source map，便于排查 1101。",
+        (value) => (["on", "off"].includes(value) ? "" : "请输入 on 或 off。"),
+      )) === "on";
+  }
+  config.vars = { ...config.vars, DEBUG: String(debug) };
+  config.upload_source_maps = debug;
+  config.observability = {
+    enabled: debug,
+    redact_query_string: true,
+    logs: { enabled: debug, head_sampling_rate: 1, invocation_logs: false },
+    traces: { enabled: false },
+  };
+  console.log(
+    debug ? "调试模式：开启（错误日志 + source maps）。" : "调试模式：关闭。",
+  );
+  // 再次部署在确认远端已有部署后才更新本地调试配置。
+  if (!reDeploy) {
+    await save(".deploy-secrets.json", secrets);
+    await save("wrangler.jsonc", config);
+  }
   let token = "";
   if (!dryRun) {
     token = await ask(
@@ -288,7 +368,9 @@ try {
     );
     if (
       (await ask(
-        "将向录入的账号/Worker 部署，并创建所需资源。输入 deploy 执行，cancel 取消",
+        reDeploy
+          ? "将更新已有 Worker 的代码、配置与 Secrets。输入 deploy 执行，cancel 取消"
+          : "将向录入的账号/Worker 部署，并创建所需资源。输入 deploy 执行，cancel 取消",
         "",
         "",
         (value) =>
@@ -297,8 +379,35 @@ try {
             : "请输入 deploy 或 cancel。",
       )) !== "deploy"
     ) {
-      console.log("已保存本地配置，未执行远端操作。");
+      console.log(
+        reDeploy
+          ? "已取消，本地配置未修改，未执行远端操作。"
+          : "已保存本地配置，未执行远端操作。",
+      );
       process.exit(0);
+    }
+    if (reDeploy) {
+      console.log("正在核实远端已有部署…");
+      let data;
+      try {
+        const response = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${config.account_id}/workers/scripts/${config.name}/deployments`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(30000),
+          },
+        );
+        data = response.ok ? await response.json() : null;
+      } catch {
+        throw new DeployError(
+          "无法核实远端部署，请检查网络与 Token 权限；尚未再次部署。",
+        );
+      }
+      if (!data?.success || !data.result?.deployments?.length)
+        throw new DeployError(
+          "未能确认该 Worker 已成功部署，请核对账号、Worker 名称和 Token 权限；首次部署请运行 ./deploy.sh。",
+        );
+      await save("wrangler.jsonc", config);
     }
     const namespace = config.kv_namespaces.find((n) => n.binding === "CONFIG");
     if (!namespace.id) {
@@ -362,6 +471,10 @@ try {
     console.log("本地构建验证通过，未调用远端 API；未生成线上 VLESS 链接。");
   } else {
     console.log("部署成功。");
+    if (debug)
+      console.log(
+        "请在 Cloudflare → Workers & Pages → 当前 Worker → Observability 查看错误，然后复现问题；排查后可运行 ./deploy.sh --re-deploy --no-debug 关闭。",
+      );
     // 按用户要求，在部署成功后显示面板地址、管理密码和节点链接。
     const routes = config.routes ?? (config.route ? [config.route] : []);
     let hostname = routes.find(

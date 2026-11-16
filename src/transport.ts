@@ -1,3 +1,4 @@
+import { reportError } from "./debug";
 import { Reader } from "./bytes";
 import { handshake } from "./protocol";
 import { openTunnel, type Tunnel } from "./outbound";
@@ -135,6 +136,9 @@ export function websocket(
     close: stop,
     abort: stop,
   });
-  void bridge(input, output, protocol, env, c, region).catch(stop);
+  void bridge(input, output, protocol, env, c, region).catch((error) => {
+    reportError(env, "websocket", error);
+    stop();
+  });
   return new Response(null, { status: 101, webSocket: client });
 }

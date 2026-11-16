@@ -176,15 +176,52 @@ vless://<NODE_UUID>@<DOMAIN>:443?encryption=none&security=tls&type=ws&host=<DOMA
 ```sh
 git pull --ff-only
 ./install_deps.sh
-./deploy.sh
+./deploy.sh --re-deploy
 ```
 
-检测到已有 `wrangler.jsonc` 后：
+`--re-deploy` 用于**已有成功部署且本地配置完整**的 Worker：
 
-- 输入 `reuse`：复用本地配置与应用密钥，不自动轮换密码、UUID 或令牌。
-- 输入 `edit`：重新填写参数；带有保留提示的字段留空会沿用原值。自定义域名留空会切换为 workers.dev。
+- 检查 `wrangler.jsonc` 的账号、Worker 名称、入口、兼容日期、有效 KV ID 和 XHTTP 绑定，以及 `.deploy-secrets.json` 的五项密钥。缺失或无效时立即退出，先运行普通 `./deploy.sh` 补齐。
+- 不再询问 `reuse/edit` 或逐项填写账号、域名、密码；不创建 KV、不重新生成应用密钥，沿用原有路由与绑定。
+- 交互询问调试模式：`on` 开启、`off` 关闭，留空保留已有状态（旧配置默认关闭）；非法选项会重新询问。输入统一去掉首尾空白。
+- 仍须手动输入 API Token，并输入 `deploy` 确认。随后通过 [Deployments API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/) 核实目标 Worker 已有部署；网络、权限或部署记录检查失败时停止，不修改本地配置、不执行 Wrangler 部署。
+- 核实通过后保存调试配置，上传**当前本地代码、配置及 Secrets**。这是一次完整部署，也会发布本地代码改动。Wrangler 随后失败时保留已经保存的配置，供重试；取消则不修改配置。
+- 成功后继续输出管理面板地址、管理密码和最后一行的 `vless://` 链接，域名规则与首次部署一致。
 
-两种方式都会重新询问 API Token 和部署确认。KV 已创建但后续部署失败时，使用 `reuse` 重试即可；脚本不会自动删除已创建的资源。
+可以用参数直接选择调试状态：
+
+```sh
+./deploy.sh --re-deploy --debug       # 开启错误日志和 source map 后部署
+./deploy.sh --re-deploy --no-debug    # 关闭后部署
+./deploy.sh --re-deploy --debug --dry-run  # 仅验证本地调试构建
+```
+
+`--dry-run` 不询问 Token、不调用远端 API，因此不会核实历史部署；调试选项只作用于临时构建配置，不修改已有配置或密钥。`--debug` 和 `--no-debug` 不能同时指定，也可用于普通首次部署，例如 `./deploy.sh --debug`。普通部署不指定开关时保留本地调试状态，首次默认关闭。
+
+需要修改账号、域名或应用密钥时，运行普通 `./deploy.sh`：已有配置时输入 `reuse` 复用或 `edit` 逐项编辑，两种方式都会询问 API Token 和部署确认。KV 已创建但首次部署尚未成功时，使用普通部署的 `reuse` 重试；`--re-deploy` 要求远端已有成功部署记录。
+
+### Error 1101 与 JavaScript 错误排查
+
+`Error 1101: Worker threw exception` 表示 Worker 出现未处理异常，单凭错误页无法判断具体原因。先更新代码和依赖，再用上述 `./deploy.sh --re-deploy --debug` 部署调试版本，然后复现问题。[Cloudflare 错误说明](https://developers.cloudflare.com/workers/observability/errors/)
+
+调试开关会统一设置：
+
+| 设置                                                  | 开启                                      | 关闭                             |
+| ----------------------------------------------------- | ----------------------------------------- | -------------------------------- |
+| `vars.DEBUG`                                          | `"true"`，记录捕获到的应用错误            | `"false"`，不记录应用错误        |
+| `upload_source_maps`                                  | `true`，部署时上传 source map             | `false`，不上传新版本 source map |
+| `observability.enabled`、`observability.logs.enabled` | `true`，启用 Workers Logs                 | `false`                          |
+| `observability.logs.head_sampling_rate`               | `1`，采样全部请求的日志，仍受平台限额约束 | 不产生日志                       |
+
+两个模式都设置 `invocation_logs: false`、`traces.enabled: false` 和 `redact_query_string: true`。脚本不会开启 Wrangler CLI 的原始调试输出；这里调试的是**部署后的 Worker**。
+
+部署成功后，在 **Cloudflare 控制台 → Workers & Pages → 当前 Worker → Observability → Logs** 查看日志，并按复现时间筛选错误。先复现管理面板或发生故障的操作，再打开对应事件，检查异常类型、堆栈和代码位置；未捕获异常也可查看事件的 exceptions 信息。[Workers Logs 官方说明](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)
+
+应用捕获的错误以 `worker.fetch failed`、`worker.websocket failed` 或 `worker.xhttp.stream failed` 标记发生阶段，只保留内置错误类型及已知源码文件的行列位置，不记录原始异常消息、cause、请求体、请求 URL、密码、Token 或完整配置。XHTTP 的异步调用异常也会进入主请求的错误处理，避免 Promise 拒绝绕过该处理。
+
+Source map 随本次构建部署上传，用于将 Cloudflare 支持的异常堆栈映射回 TypeScript 源文件；它不会修复异常或补齐旧部署的日志。脱敏后的自定义日志堆栈不保证由平台自动映射，未映射时保留的是构建文件位置。[Source maps 官方说明](https://developers.cloudflare.com/workers/observability/source-maps/)
+
+需要协助定位时，只提供复现时间、错误阶段、类型和必要的脱敏代码位置，不要粘贴完整请求上下文、订阅 URL、配置或密钥。排查完成后运行 `./deploy.sh --re-deploy --no-debug` 关闭新版本日志和 source map 上传；关闭不会删除平台已保存的历史日志或旧版本 source map。
 
 ### 本地文件
 
@@ -241,7 +278,7 @@ KV 为最终一致存储，配置保存与重置在不同地区可能延迟生�
 
 只支持 TCP，不支持 UDP、QUIC、MUX 或 XHTTP stream-one/stream-up。单连接上行 64 MiB、下行 128 MiB、最长 15 分钟；协议认证等待最多 10 秒。XHTTP 使用默认路径形式的 session ID 和序号，不支持客户端自定义头部/查询参数携带会话。
 
-订阅地址含令牌，分享它等同于分享节点访问权限。应用代码关闭 observability 且不输出配置；自行启用平台访问日志时，应过滤订阅 URL，避免记录令牌。
+订阅地址含令牌，分享它等同于分享节点访问权限。默认关闭 observability；调试模式仅添加脱敏的应用错误日志，并关闭 invocation logs 和 traces。Cloudflare 原生异常事件仍可能包含请求上下文，自行开启的其他日志服务也不受脚本控制；不要直接分享完整平台日志，尤其要移除含订阅令牌的 URL。
 
 ## 常见问题
 
@@ -253,6 +290,7 @@ KV 为最终一致存储，配置保存与重置在不同地区可能延迟生�
 | 依赖安装失败                        | 检查 npm registry、网络和 Node.js 运行环境，再运行安装脚本                                                              |
 | 提示配置必须是有效 JSON             | 在本地编辑器检查配置和密钥文件，移除注释、尾随逗号等非法内容                                                            |
 | KV 创建失败                         | 核对 Account ID、Token 的目标账号范围与 KV 编辑权限                                                                     |
+| Error 1101 / Worker threw exception | 按上文开启调试部署，复现后查看 Workers Logs 的异常与堆栈；错误码本身不能确定原因                                        |
 | Wrangler 执行失败                   | 核对 Token 权限、KV 归属、域名归属及网络；原始输出不会回显。可先运行 `./deploy.sh --dry-run` 区分本地构建与远端部署问题 |
 | 更新后密码、UUID 或订阅令牌变回旧值 | 检查 `.deploy-secrets.json` 是否与远端保持一致，按上文密钥更新流程重新部署                                              |
 
@@ -267,7 +305,7 @@ npm run test:scripts
 npm run format:check
 ```
 
-单元测试覆盖分片协议头、错误认证、UDP 拒绝、会话签名与密码轮换、订阅格式隔离。运行时测试使用 Miniflare/workerd、真实本地 TCP echo 服务以及 KV/DO，检查登录、CSRF、WebSocket、XHTTP 和有作用域的重置。部署脚本测试使用模拟 Cloudflare API 和 Wrangler，覆盖配置生成、权限、复用、取消、失败脱敏及 KV 创建后重试；不会创建真实远端资源。构建产物和本地测试数据不提交。
+单元测试覆盖分片协议头、错误认证、UDP 拒绝、会话签名与密码轮换、订阅格式隔离。运行时测试使用 Miniflare/workerd、真实本地 TCP echo 服务以及 KV/DO，检查登录、CSRF、WebSocket、XHTTP、有作用域的重置及脱敏错误日志。部署脚本测试使用模拟 Cloudflare API 和 Wrangler，覆盖配置生成、权限、复用、取消、失败脱敏、KV 创建后重试、再次部署校验与调试开关；不会创建真实远端资源。构建产物和本地测试数据不提交。
 
 协议参考：[Xray XHTTP](https://github.com/XTLS/Xray-core/tree/main/transport/internet/splithttp)、[Shadowsocks AEAD](https://github.com/shadowsocks/shadowsocks-org/blob/main/docs/doc/aead.md)。代码模块位于 `src/`，测试位于 `test/`。
 

@@ -34,7 +34,16 @@
     ]
   },
   "observability": {
-    "enabled": false
+    "enabled": false,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": false,
+      "head_sampling_rate": 1,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
   },
   "rules": [
     {
@@ -42,5 +51,9 @@
       "globs": ["**/*.html"],
       "fallthrough": true
     }
-  ]
+  ],
+  "vars": {
+    "DEBUG": "false"
+  },
+  "upload_source_maps": false
 }

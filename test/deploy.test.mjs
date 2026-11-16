@@ -45,6 +45,8 @@ async function fixture(t) {
  const fs=require('node:fs');
  const secrets=JSON.parse(fs.readFileSync('.deploy-secrets.json'));
  const args=process.argv.slice(2);
+ const config=JSON.parse(fs.readFileSync(args[args.indexOf('--config')+1]));
+ fs.writeFileSync('debug-settings.json',JSON.stringify({debug:config.vars.DEBUG,maps:config.upload_source_maps,observability:config.observability}));
  if(args.includes('--secrets-file') && fs.readlinkSync(process.env.WRANGLER_LOG_PATH)==='/dev/null')fs.writeFileSync('called.json',JSON.stringify(args));
  console.log(secrets.ADMIN_PASSWORD);console.error(process.env.CLOUDFLARE_API_TOKEN);
  if(process.env.TEST_EXPECT_TOKEN && process.env.CLOUDFLARE_API_TOKEN!==process.env.TEST_EXPECT_TOKEN)process.exit(2);
@@ -57,7 +59,13 @@ async function fixture(t) {
     import fs from 'node:fs';
     globalThis.fetch = async (url, options) => {
       fs.appendFileSync('api-calls.txt', url + '\\n');
-      if (!url.endsWith('/workers/subdomain') || options.method || !options.headers.Authorization) throw Error('unexpected API call');
+      if (options.method || !options.headers.Authorization) throw Error('unexpected API call');
+      if (url.endsWith('/workers/scripts/test-worker/deployments')) {
+        if (process.env.TEST_DEPLOYMENTS_FAIL === 'network') throw Error('network failure');
+        if (process.env.TEST_DEPLOYMENTS_FAIL === 'denied') return Response.json({success:false},{status:403});
+        return Response.json({success:true,result:{deployments:process.env.TEST_DEPLOYMENTS_FAIL ? [] : [{id:'test-deployment'}]}});
+      }
+      if (!url.endsWith('/workers/subdomain')) throw Error('unexpected API call');
       if (process.env.TEST_SUBDOMAIN_FAIL) return Response.json({success:false}, {status:403});
       return Response.json({success:true,result:{subdomain:'assigned-account'}});
     };
@@ -594,4 +602,149 @@ test("successful deployment displays the saved random admin password and keeps t
     token,
   ])
     assert.ok(!result.output.includes(secret));
+});
+
+test("re-deploy requires complete configuration and secrets before remote operations", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, [], ["--re-deploy", "--debug"]).status, 1);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  await rm(join(root, "called.json"));
+  const original = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  for (const change of [
+    (c) => {
+      c.kv_namespaces[0].id = "";
+    },
+    (c) => {
+      delete c.account_id;
+    },
+    (c) => {
+      delete c.durable_objects;
+    },
+    (c) => {
+      delete c.main;
+    },
+    (c) => {
+      c.compatibility_date = "invalid";
+    },
+  ]) {
+    const c = structuredClone(original);
+    change(c);
+    await writeFile(join(root, "wrangler.jsonc"), JSON.stringify(c));
+    assert.equal(run(root, [], ["--re-deploy", "--debug"]).status, 1);
+  }
+  await writeFile(join(root, "wrangler.jsonc"), JSON.stringify(original));
+  await rm(join(root, ".deploy-secrets.json"));
+  assert.equal(run(root, [], ["--re-deploy", "--debug"]).status, 1);
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+  await assert.rejects(stat(join(root, "called.json")));
+});
+
+test("re-deploy toggles debug and maps while preserving existing identity and bindings", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const original = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  // Simulate an existing deployment made before debug support was added.
+  delete original.vars;
+  delete original.upload_source_maps;
+  await writeFile(join(root, "wrangler.jsonc"), JSON.stringify(original));
+  const secrets = await readFile(join(root, ".deploy-secrets.json"), "utf8");
+  for (const enabled of [true, false]) {
+    const result = run(
+      root,
+      ["", "   ", token, "deploy"],
+      ["--re-deploy", enabled ? "--debug" : "--no-debug"],
+    );
+    assert.equal(result.status, 0);
+    assert.ok(result.output.includes("此项为必填项"));
+    assert.ok(!result.output.includes("reuse"));
+    assert.ok(result.output.includes("管理面板地址："));
+    assert.ok(result.output.trim().split("\n").at(-1).startsWith("vless://"));
+    const updated = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+    assert.equal(updated.vars.DEBUG, String(enabled));
+    assert.equal(updated.upload_source_maps, enabled);
+    assert.equal(updated.observability.logs.enabled, enabled);
+    assert.equal(updated.observability.logs.invocation_logs, false);
+    assert.equal(updated.observability.logs.head_sampling_rate, 1);
+    assert.equal(updated.observability.traces.enabled, false);
+    assert.equal(updated.observability.redact_query_string, true);
+    for (const key of [
+      "account_id",
+      "name",
+      "main",
+      "compatibility_date",
+      "kv_namespaces",
+      "durable_objects",
+      "routes",
+    ])
+      assert.deepEqual(updated[key], original[key]);
+    assert.equal(
+      await readFile(join(root, ".deploy-secrets.json"), "utf8"),
+      secrets,
+    );
+  }
+  const calls = await readFile(join(root, "api-calls.txt"), "utf8");
+  assert.equal((calls.match(/\/deployments/g) ?? []).length, 2);
+  assert.ok(!calls.includes("/storage/kv"));
+});
+
+test("re-deploy offers validated interactive debug choice and preserves mode by default", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const on = run(root, ["invalid", "  on  ", token, "deploy"], ["--re-deploy"]);
+  assert.equal(on.status, 0);
+  assert.ok(on.output.includes("请输入 on 或 off"));
+  assert.equal(run(root, ["", token, "deploy"], ["--re-deploy"]).status, 0);
+  assert.equal(
+    JSON.parse(await readFile(join(root, "wrangler.jsonc"))).vars.DEBUG,
+    "true",
+  );
+  assert.equal(run(root, ["off", token, "deploy"], ["--re-deploy"]).status, 0);
+  assert.equal(
+    JSON.parse(await readFile(join(root, "wrangler.jsonc"))).vars.DEBUG,
+    "false",
+  );
+});
+
+test("unverified prior deployment or cancellation leaves configuration and secrets untouched", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  await rm(join(root, "called.json"));
+  const config = await readFile(join(root, "wrangler.jsonc"), "utf8");
+  const secrets = await readFile(join(root, ".deploy-secrets.json"), "utf8");
+  assert.equal(
+    run(root, [token, "cancel"], ["--re-deploy", "--debug"]).status,
+    0,
+  );
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+  for (const failure of ["empty", "denied", "network"]) {
+    const result = run(root, [token, "deploy"], ["--re-deploy", "--debug"], {
+      TEST_DEPLOYMENTS_FAIL: failure,
+    });
+    assert.equal(result.status, 1);
+    assert.ok(!result.output.includes("管理面板地址："));
+    assert.equal(await readFile(join(root, "wrangler.jsonc"), "utf8"), config);
+    assert.equal(
+      await readFile(join(root, ".deploy-secrets.json"), "utf8"),
+      secrets,
+    );
+    await assert.rejects(stat(join(root, "called.json")));
+  }
+});
+
+test("re-deploy dry run changes only temporary build configuration and rejects conflicting flags", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const before = await readFile(join(root, "wrangler.jsonc"), "utf8");
+  assert.equal(
+    run(root, [], ["--re-deploy", "--debug", "--dry-run"]).status,
+    0,
+  );
+  const built = JSON.parse(await readFile(join(root, "debug-settings.json")));
+  assert.equal(built.debug, "true");
+  assert.equal(built.maps, true);
+  assert.equal(await readFile(join(root, "wrangler.jsonc"), "utf8"), before);
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+  await assert.rejects(stat(join(root, ".wrangler-deploy-check.jsonc")));
+  assert.equal(run(root, [], ["--debug", "--no-debug"]).status, 1);
+  assert.equal(run(root, [], ["--unknown"]).status, 1);
 });

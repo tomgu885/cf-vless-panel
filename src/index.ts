@@ -1,3 +1,4 @@
+import { reportError } from "./debug";
 import panel from "./panel/index.html";
 import { settings, validate, key, defaults } from "./config";
 import { authenticated, issue, cookie, secureEqual } from "./auth";
@@ -130,9 +131,10 @@ export default {
         ((req.method === "GET" && x[3] === undefined) ||
           (req.method === "POST" && x[3] !== undefined))
       )
-        return env.XHTTP.getByName(x[2]).handle(req, c, x[1] ?? "");
+        return await env.XHTTP.getByName(x[2]).handle(req, c, x[1] ?? "");
       return new Response("Not found", { status: 404, headers: security });
-    } catch {
+    } catch (error) {
+      reportError(env, "fetch", error);
       return Response.json(
         { error: "请求失败，请检查输入与服务配置。" },
         { status: 400, headers: security },

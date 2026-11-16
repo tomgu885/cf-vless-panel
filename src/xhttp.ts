@@ -1,3 +1,4 @@
+import { reportError } from "./debug";
 import { DurableObject } from "cloudflare:workers";
 import { bridge } from "./transport";
 import { bounded } from "./bytes";
@@ -42,7 +43,7 @@ export class XhttpSession extends DurableObject<Env> {
           this.config,
           this.region,
         )
-          .catch(() => {})
+          .catch((error) => reportError(this.env, "xhttp.stream", error))
           .finally(() => this.finish()),
       );
       return new Response(output.readable, {

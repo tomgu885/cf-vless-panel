@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { Miniflare, Log, LogLevel, convertV4MiniflareOptions } from "miniflare";
 import { createServer } from "node:net";
 import { once } from "node:events";
+const diagnostics: string[] = [];
 const bindings = {
+  DEBUG: "true",
   NODE_UUID: "00000000-0000-4000-8000-000000000001",
   TROJAN_PASSWORD: "test-only-trojan-password",
   ADMIN_PASSWORD: "test-only-admin-password",
@@ -41,6 +43,7 @@ const mf = new Miniflare(
       },
     ],
     log: new Log(LogLevel.NONE),
+    handleStructuredLogs: (log) => diagnostics.push(log.message),
   }),
 );
 test(
@@ -55,6 +58,30 @@ test(
       const request = (path: string, init?: RequestInit) =>
         mf.dispatchFetch("https://panel.test" + path, init);
       assert.equal((await request("/api/settings")).status, 401);
+      const malformed = await request("/api/login", {
+        method: "POST",
+        headers: { Origin: "https://panel.test" },
+        body: "test-only-private-invalid-json",
+      });
+      assert.equal(malformed.status, 400);
+      assert.ok(!(await malformed.text()).includes("test-only-private"));
+      for (
+        let attempt = 0;
+        attempt < 100 &&
+        !diagnostics.some((line) => line.includes("worker.fetch failed"));
+        attempt++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      const diagnostic = diagnostics.find((line) =>
+        line.includes("worker.fetch failed"),
+      );
+      assert.ok(
+        diagnostic,
+        "caught JavaScript errors should reach runtime logs",
+      );
+      assert.match(diagnostic, /SyntaxError/);
+      assert.match(diagnostic, /index\.js:\d+:\d+/);
+      assert.ok(!diagnostic.includes("test-only-private"));
       assert.equal(
         (
           await request("/api/login", {
