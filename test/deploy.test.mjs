@@ -51,6 +51,18 @@ async function fixture(t) {
  if(process.env.TEST_WRANGLER_FAIL)process.exit(1);
  `,
   );
+  await writeFile(
+    join(root, "mock-read-api.mjs"),
+    `
+    import fs from 'node:fs';
+    globalThis.fetch = async (url, options) => {
+      fs.appendFileSync('api-calls.txt', url + '\\n');
+      if (!url.endsWith('/workers/subdomain') || options.method || !options.headers.Authorization) throw Error('unexpected API call');
+      if (process.env.TEST_SUBDOMAIN_FAIL) return Response.json({success:false}, {status:403});
+      return Response.json({success:true,result:{subdomain:'assigned-account'}});
+    };
+  `,
+  );
   return root;
 }
 function run(root, lines, args = [], env = {}) {
@@ -58,7 +70,12 @@ function run(root, lines, args = [], env = {}) {
     cwd: root,
     input: lines.join("\n") + "\n",
     encoding: "utf8",
-    env: { ...process.env, CLOUDFLARE_API_TOKEN: "", ...env },
+    env: {
+      ...process.env,
+      CLOUDFLARE_API_TOKEN: "",
+      NODE_OPTIONS: "--import=" + join(root, "mock-read-api.mjs"),
+      ...env,
+    },
     timeout: 10000,
   });
   const output = (r.stdout ?? "") + (r.stderr ?? "");
@@ -115,6 +132,7 @@ test("automatic KV creation persists ID before deployment and is reused", async 
     `
  import fs from 'node:fs';
  globalThis.fetch=async(url,options)=>{
+ if(url.endsWith('/workers/subdomain'))return Response.json({success:true,result:{subdomain:'assigned-account'}});
  if(!url.startsWith('https://api.cloudflare.com/client/v4/accounts/')||options.method!=='POST'||!options.headers.Authorization)throw Error('invalid API call');
  fs.writeFileSync('kv-created','yes');return Response.json({success:true,result:{id:'${kv}'}});
  };
@@ -227,4 +245,90 @@ test("prompts explain where external parameters and application credentials come
     "My Profile → API Tokens → Create Token",
   ])
     assert.ok(result.output.includes(hint));
+});
+
+test("successful deploy prints a VLESS URI using the first configured custom domain", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const c = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  c.routes = [
+    { pattern: "ordinary.example.com/*" },
+    { pattern: "preferred.example.com", custom_domain: true },
+    { pattern: "second.example.com", custom_domain: true },
+  ];
+  await writeFile(join(root, "wrangler.jsonc"), JSON.stringify(c));
+  const result = run(root, ["reuse", token, "deploy"]);
+  assert.equal(result.status, 0);
+  const link = new URL(
+    result.output.split(/\r?\n/).find((line) => line.startsWith("vless://")),
+  );
+  assert.equal(link.hostname, "preferred.example.com");
+  assert.equal(link.port, "443");
+  assert.equal(
+    link.username,
+    JSON.parse(await readFile(join(root, ".deploy-secrets.json"))).NODE_UUID,
+  );
+  for (const [key, value] of Object.entries({
+    host: "preferred.example.com",
+    sni: "preferred.example.com",
+    type: "ws",
+    path: "/ws",
+    security: "tls",
+    encryption: "none",
+  }))
+    assert.equal(link.searchParams.get(key), value);
+  assert.equal(decodeURIComponent(link.hash.slice(1)), c.name);
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+});
+
+test("without a custom domain the URI uses the account subdomain returned by Cloudflare", async (t) => {
+  const root = await fixture(t);
+  const result = run(root, [...answers(), token, "deploy"]);
+  assert.equal(result.status, 0);
+  const link = new URL(
+    result.output.split(/\r?\n/).find((line) => line.startsWith("vless://")),
+  );
+  assert.equal(link.hostname, "test-worker.assigned-account.workers.dev");
+  assert.equal(link.searchParams.get("sni"), link.hostname);
+  assert.equal(link.searchParams.get("host"), link.hostname);
+  assert.ok(
+    (await readFile(join(root, "api-calls.txt"), "utf8")).includes(
+      "/workers/subdomain",
+    ),
+  );
+});
+
+test("dry run, cancellation, failed deployment and failed domain lookup do not print a usable-looking URI", async (t) => {
+  const root = await fixture(t);
+  const dry = run(root, answers(), ["--dry-run"]);
+  assert.equal(dry.status, 0);
+  assert.ok(!dry.output.includes("vless://"));
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+  const cancelled = run(root, ["reuse", token, "cancel"]);
+  assert.ok(!cancelled.output.includes("vless://"));
+  const failed = run(root, ["reuse", token, "deploy"], [], {
+    TEST_WRANGLER_FAIL: "1",
+  });
+  assert.equal(failed.status, 1);
+  assert.ok(!failed.output.includes("vless://"));
+  await assert.rejects(stat(join(root, "api-calls.txt")));
+  const lookup = run(root, ["reuse", token, "deploy"], [], {
+    TEST_SUBDOMAIN_FAIL: "1",
+  });
+  assert.equal(lookup.status, 1);
+  assert.ok(lookup.output.includes("部署已成功"));
+  assert.ok(!lookup.output.includes("vless://"));
+});
+
+test("disabled workers.dev without custom domain does not generate an inaccessible URI", async (t) => {
+  const root = await fixture(t);
+  assert.equal(run(root, answers(), ["--dry-run"]).status, 0);
+  const c = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
+  c.workers_dev = false;
+  await writeFile(join(root, "wrangler.jsonc"), JSON.stringify(c));
+  const result = run(root, ["reuse", token, "deploy"]);
+  assert.equal(result.status, 1);
+  assert.ok(result.output.includes("workers.dev 已禁用"));
+  assert.ok(!result.output.includes("vless://"));
+  await assert.rejects(stat(join(root, "api-calls.txt")));
 });

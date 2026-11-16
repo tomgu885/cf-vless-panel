@@ -236,11 +236,59 @@ try {
   } finally {
     if (dryRun) await rm(buildConfig, { force: true });
   }
-  console.log(
-    dryRun
-      ? "本地构建验证通过，未调用远端 API。"
-      : "部署成功。请在 Cloudflare 控制台查看访问地址。",
-  );
+  if (dryRun) {
+    console.log("本地构建验证通过，未调用远端 API；未生成线上 VLESS 链接。");
+  } else {
+    console.log("部署成功。");
+    // 仅在部署成功后输出用户请求的节点链接，不回显其他凭据。
+    const routes = config.routes ?? (config.route ? [config.route] : []);
+    let hostname = routes.find(
+      (route) => route?.custom_domain === true,
+    )?.pattern;
+    if (!hostname && config.workers_dev === false) {
+      throw new DeployError(
+        "部署已成功，但未配置自定义域名且 workers.dev 已禁用，无法生成 VLESS 链接。",
+      );
+    }
+    if (!hostname) {
+      try {
+        const response = await fetch(
+          `https://api.cloudflare.com/client/v4/accounts/${config.account_id}/workers/subdomain`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(30000),
+          },
+        );
+        const data = await response.json();
+        if (
+          !response.ok ||
+          !data.success ||
+          !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(
+            data.result?.subdomain ?? "",
+          )
+        ) {
+          throw new Error("Unavailable subdomain");
+        }
+        hostname = `${config.name}.${data.result.subdomain}.workers.dev`;
+      } catch {
+        throw new DeployError(
+          "部署已成功，但读取 Cloudflare 分配域名失败，未生成 VLESS 链接。请检查网络与 Token 的 Workers Scripts 权限。",
+        );
+      }
+    }
+    const params = new URLSearchParams({
+      encryption: "none",
+      security: "tls",
+      type: "ws",
+      host: hostname,
+      sni: hostname,
+      path: "/ws",
+    });
+    console.log("VLESS / WebSocket（TLS，端口 443），复制到客户端导入：");
+    console.log(
+      `vless://${encodeURIComponent(secrets.NODE_UUID)}@${hostname}:443?${params}#${encodeURIComponent(config.name)}`,
+    );
+  }
 } catch (error) {
   // 只显示脚本自己的错误，网络/系统异常可能包含配置或凭据。
   console.error(
