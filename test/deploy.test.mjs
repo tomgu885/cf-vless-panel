@@ -61,9 +61,33 @@ async function fixture(t) {
       fs.appendFileSync('api-calls.txt', url + '\\n');
       if (options.method || !options.headers.Authorization) throw Error('unexpected API call');
       if (url.endsWith('/workers/scripts/test-worker/deployments')) {
-        if (process.env.TEST_DEPLOYMENTS_FAIL === 'network') throw Error('network failure');
-        if (process.env.TEST_DEPLOYMENTS_FAIL === 'denied') return Response.json({success:false},{status:403});
-        return Response.json({success:true,result:{deployments:process.env.TEST_DEPLOYMENTS_FAIL ? [] : [{id:'test-deployment'}]}});
+        const privateText = options.headers.Authorization + ' ' + url;
+        switch (process.env.TEST_DEPLOYMENTS_FAIL) {
+          case 'network':
+            throw new TypeError(privateText, { cause: { code: 'ENOTFOUND', message: privateText } });
+          case 'unknown-network':
+            throw new TypeError(privateText, { cause: { code: privateText } });
+          case 'timeout':
+            throw new DOMException(privateText, 'TimeoutError');
+          case 'denied':
+            return Response.json({success:false,errors:[{code:10000,message:privateText},{code:privateText}]},{status:403});
+          case 'invalid-token':
+            return Response.json({success:false,errors:[{code:10001,message:privateText}]},{status:401});
+          case 'missing-worker':
+            return Response.json({success:false},{status:404});
+          case 'gateway':
+            return new Response(privateText,{status:502});
+          case 'invalid-json':
+            return new Response(privateText);
+          case 'invalid-list':
+            return Response.json({success:true,result:{deployments:privateText}});
+          case 'api-error':
+            return Response.json({success:false,errors:[{code:10007,message:privateText}]});
+          case 'empty':
+            return Response.json({success:true,result:{deployments:[]}});
+          default:
+            return Response.json({success:true,result:{deployments:[{id:'test-deployment'}]}});
+        }
       }
       if (!url.endsWith('/workers/subdomain')) throw Error('unexpected API call');
       if (process.env.TEST_SUBDOMAIN_FAIL) return Response.json({success:false}, {status:403});
@@ -657,6 +681,11 @@ test("re-deploy toggles debug and maps while preserving existing identity and bi
     assert.equal(result.status, 0);
     assert.ok(result.output.includes("此项为必填项"));
     assert.ok(!result.output.includes("reuse"));
+    assert.match(
+      result.stdout,
+      /远端部署核实通过（HTTP 200，\d+ ms，本次返回 1 条部署记录）/,
+    );
+    assert.ok(!result.output.includes("test-deployment"));
     assert.ok(result.output.includes("管理面板地址："));
     assert.ok(result.output.trim().split("\n").at(-1).startsWith("vless://"));
     const updated = JSON.parse(await readFile(join(root, "wrangler.jsonc")));
@@ -716,11 +745,27 @@ test("unverified prior deployment or cancellation leaves configuration and secre
     0,
   );
   await assert.rejects(stat(join(root, "api-calls.txt")));
-  for (const failure of ["empty", "denied", "network"]) {
+  for (const [failure, detail] of [
+    ["empty", /HTTP 200.*未查到已有部署记录/],
+    ["denied", /HTTP 403.*访问被拒绝.*Cloudflare 错误码 10000/],
+    ["invalid-token", /HTTP 401.*认证失败.*Cloudflare 错误码 10001/],
+    ["missing-worker", /HTTP 404.*目标资源未找到/],
+    ["gateway", /HTTP 502.*Cloudflare API 返回错误/],
+    ["network", /请求 Cloudflare API 失败（ENOTFOUND）/],
+    ["unknown-network", /请求 Cloudflare API 失败，/],
+    ["timeout", /请求超时/],
+    ["invalid-json", /HTTP 200.*响应格式异常/],
+    ["invalid-list", /HTTP 200.*响应格式异常/],
+    ["api-error", /HTTP 200.*Cloudflare API 返回错误.*Cloudflare 错误码 10007/],
+  ]) {
     const result = run(root, [token, "deploy"], ["--re-deploy", "--debug"], {
       TEST_DEPLOYMENTS_FAIL: failure,
     });
     assert.equal(result.status, 1);
+    assert.match(result.stderr, detail);
+    assert.match(result.stderr, /远端部署核实失败（(?:HTTP \d{3}，)?\d+ ms）/);
+    assert.ok(result.stderr.includes("尚未再次部署"));
+    assert.ok(!result.output.includes("test-worker"));
     assert.ok(!result.output.includes("管理面板地址："));
     assert.equal(await readFile(join(root, "wrangler.jsonc"), "utf8"), config);
     assert.equal(

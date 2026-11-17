@@ -387,26 +387,91 @@ try {
       process.exit(0);
     }
     if (reDeploy) {
-      console.log("正在核实远端已有部署…");
+      console.log(
+        "正在通过 Cloudflare Deployments API 核实远端已有部署（超时 30 秒）…",
+      );
+      const started = performance.now();
+      const signal = AbortSignal.timeout(30000);
+      let response;
       let data;
+      const timing = () => {
+        const elapsed = `${Math.round(performance.now() - started)} ms`;
+        return response ? `HTTP ${response.status}，${elapsed}` : elapsed;
+      };
+      const verificationError = (detail) =>
+        new DeployError(
+          `远端部署核实失败（${timing()}）：${detail}。尚未再次部署。`,
+        );
       try {
-        const response = await fetch(
+        response = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${config.account_id}/workers/scripts/${config.name}/deployments`,
           {
             headers: { Authorization: `Bearer ${token}` },
-            signal: AbortSignal.timeout(30000),
+            signal,
           },
         );
-        data = response.ok ? await response.json() : null;
-      } catch {
-        throw new DeployError(
-          "无法核实远端部署，请检查网络与 Token 权限；尚未再次部署。",
+        data = await response.json();
+      } catch (error) {
+        if (signal.aborted || error?.name === "TimeoutError")
+          throw verificationError(
+            "请求超时，请检查到 Cloudflare API 的网络连接",
+          );
+        // 仅输出已知网络错误码，原始异常和响应内容可能包含敏感值。
+        if (!(response && error instanceof SyntaxError)) {
+          const code = error?.cause?.code ?? error?.code;
+          const knownCode = [
+            "ENOTFOUND",
+            "EAI_AGAIN",
+            "ECONNREFUSED",
+            "ECONNRESET",
+            "ETIMEDOUT",
+            "ENETUNREACH",
+            "EHOSTUNREACH",
+            "UND_ERR_CONNECT_TIMEOUT",
+            "UND_ERR_SOCKET",
+            "CERT_HAS_EXPIRED",
+            "ERR_TLS_CERT_ALTNAME_INVALID",
+            "SELF_SIGNED_CERT_IN_CHAIN",
+            "DEPTH_ZERO_SELF_SIGNED_CERT",
+            "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+            "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+          ].includes(code)
+            ? `（${code}）`
+            : "";
+          const stage = response ? "读取响应失败" : "请求 Cloudflare API 失败";
+          throw verificationError(`${stage}${knownCode}，请检查网络连接`);
+        }
+      }
+      if (!response.ok || data?.success === false) {
+        const codes = Array.isArray(data?.errors)
+          ? data.errors.map((error) => error?.code).filter(Number.isSafeInteger)
+          : [];
+        const reason =
+          {
+            401: "认证失败，请检查 API Token 是否有效",
+            403: "访问被拒绝，请检查 Token 的账号范围与 Workers Scripts 权限",
+            404: "目标资源未找到，请核对 Account ID 和 Worker 名称",
+            429: "Cloudflare API 请求受限，请稍后重试",
+          }[response.status] ??
+          "Cloudflare API 返回错误，请根据 HTTP 状态和错误码排查";
+        throw verificationError(
+          codes.length
+            ? `${reason}（Cloudflare 错误码 ${codes.join(", ")}）`
+            : reason,
         );
       }
-      if (!data?.success || !data.result?.deployments?.length)
-        throw new DeployError(
-          "未能确认该 Worker 已成功部署，请核对账号、Worker 名称和 Token 权限；首次部署请运行 ./deploy.sh。",
+      const deployments = data?.result?.deployments;
+      if (data?.success !== true || !Array.isArray(deployments))
+        throw verificationError(
+          "Cloudflare API 响应格式异常，无法读取部署列表",
         );
+      if (deployments.length === 0)
+        throw verificationError(
+          "未查到已有部署记录，首次部署请运行 ./deploy.sh",
+        );
+      console.log(
+        `远端部署核实通过（${timing()}，本次返回 ${deployments.length} 条部署记录）。`,
+      );
       await save("wrangler.jsonc", config);
     }
     const namespace = config.kv_namespaces.find((n) => n.binding === "CONFIG");

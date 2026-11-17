@@ -185,6 +185,7 @@ git pull --ff-only
 - 不再询问 `reuse/edit` 或逐项填写账号、域名、密码；不创建 KV、不重新生成应用密钥，沿用原有路由与绑定。
 - 交互询问调试模式：`on` 开启、`off` 关闭，留空保留已有状态（旧配置默认关闭）；非法选项会重新询问。输入统一去掉首尾空白。
 - 仍须手动输入 API Token，并输入 `deploy` 确认。随后通过 [Deployments API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/deployments/methods/list/) 核实目标 Worker 已有部署；网络、权限或部署记录检查失败时停止，不修改本地配置、不执行 Wrangler 部署。
+- 核实结果直接输出到终端，包含耗时、收到的 HTTP 状态，以及可用的 Cloudflare 数字错误码或已知网络错误码。成功时显示本次返回的部署记录数。失败时根据连接、超时、权限、资源不存在、响应格式或空部署列表给出提示。诊断输出省略 Token、账号 ID、Worker 名称、原始异常和响应正文。
 - 核实通过后保存调试配置，上传**当前本地代码、配置及 Secrets**。这是一次完整部署，也会发布本地代码改动。Wrangler 随后失败时保留已经保存的配置，供重试；取消则不修改配置。
 - 成功后继续输出管理面板地址、管理密码和最后一行的 `vless://` 链接，域名规则与首次部署一致。
 
